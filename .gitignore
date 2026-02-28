@@ -3,3 +3,4 @@ package-lock.json
 udp_serv.js
 multicast.js
 publish.sh
+dist/

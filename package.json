@@ -1,24 +1,33 @@
 {
   "name": "homebridge-ecoplug",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "description": "Homebridge plugin to control ECO Plugs by KAB",
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Danimal4326/homebridge-ecoplug"
+    "url": "https://github.com/IWCaldwell/homebridge-ecoplug"
   },
   "keywords": [
     "homebridge-plugin",
     "ecoplug"
   ],
   "engines": {
-    "node": ">=0.12.0",
-    "homebridge": ">=0.3.0"
+    "node": "^22.0.0 || ^24.0.0 || ^25.0.0",
+    "homebridge": "^1.8.0 || ^2.0.0"
   },
   "dependencies": {
-    "binary-parser": "~1.1.5",
-    "debug": "^2.2.0"
+    "debug": "^4.4.1"
   },
-  "main": "index.js",
-  "author": "Dan Chlopek"
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0",
+    "homebridge": "^1.8.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "main": "dist/index.js",
+  "author": "Ian Caldwell"
 }
