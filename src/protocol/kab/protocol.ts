@@ -15,9 +15,12 @@ import {
     buildPowerCommand,
     buildStatusQueryCommand,
     buildDimCommand,
+    buildDiscoveryHandshake,
+    parseDiscoveryResponse,
     parseKabResponse,
     type KabResponse,
 } from './packets.js';
+import { KAB_COMMAND_PORT } from '../../settings.js';
 import type { DeviceInfo } from '../types.js';
 
 export const KAB_COMMAND_TIMEOUT_MS = 2000;
@@ -31,8 +34,9 @@ export interface KabCommandResult {
 
 /**
  * Internal: send `buf` to `host:port` and wait up to `timeoutMs` for a
- * 152-byte response.  Uses a dedicated short-lived socket per call to
- * simplify correlation.
+ * response.  The socket is bound to KAB_COMMAND_PORT (9090) so the device
+ * sees port 9090 as the source and replies there — mirroring the Android
+ * app which also binds a single socket to port 9090 for both send and receive.
  *
  * @param log  Optional logger — when supplied, debug lines are emitted.
  */
@@ -44,7 +48,7 @@ function sendAndReceive(
     log?: (msg: string) => void,
 ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
-        const sock = dgram.createSocket('udp4');
+        const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
         let settled = false;
 
         const finish = (err?: Error, data?: Buffer) => {
@@ -68,7 +72,9 @@ function sendAndReceive(
             finish(undefined, msg);
         });
 
-        sock.bind(0, () => {
+        // Bind to KAB_COMMAND_PORT so the device sees 9090 as the source port
+        // and replies to 9090 — exactly how the Android app works.
+        sock.bind(KAB_COMMAND_PORT, () => {
             const addr = sock.address();
             log?.(`KAB tx ${buf.length}B to ${host}:${port} (from port ${addr.port}): ${buf.toString('hex')}`);
             sock.send(buf, 0, buf.length, port, host, (err) => {
@@ -76,6 +82,42 @@ function sendAndReceive(
             });
         });
     });
+}
+
+/**
+ * Perform the KAB discovery handshake (cmdCode=23, subtype=105) to learn the
+ * device's actual LAN IP and command port.
+ *
+ * The Android app (a$d timer) sends this to the beacon-sender IP:beaconCmdPort
+ * every second.  On success, `device.kabLanIp` and `device.kabLanPort` are
+ * populated and used for all subsequent STATUS / POWER commands.
+ *
+ * The cmdCode=105 response from the device is NOT encrypted (per APK b([B)[B)).
+ */
+async function performDiscovery(device: DeviceInfo, log?: (msg: string) => void): Promise<void> {
+    const idInt = device.kabDeviceIdInt ?? 0;
+    const key   = device.kabKey  ?? '';
+    const pass  = device.kabPass ?? '111111';
+
+    const beaconHost = device.host;
+    const beaconPort = device.kabCommandPort ?? device.port;
+
+    log?.(`KAB discovery → ${beaconHost}:${beaconPort}  (cmdCode=23 subtype=105)`);
+
+    try {
+        const discBuf = buildDiscoveryHandshake(idInt, key, pass);
+        const raw     = await sendAndReceive(discBuf, beaconHost, beaconPort, KAB_COMMAND_TIMEOUT_MS, log);
+        const disc    = parseDiscoveryResponse(raw);
+        if (disc && disc.ip !== '0.0.0.0' && disc.port > 0) {
+            device.kabLanIp   = disc.ip;
+            device.kabLanPort = disc.port;
+            log?.(`KAB discovered LAN address: ${disc.ip}:${disc.port}`);
+        } else {
+            log?.(`KAB discovery response unreadable — will use beacon address ${beaconHost}:${beaconPort}`);
+        }
+    } catch (e) {
+        log?.(`KAB discovery failed: ${e instanceof Error ? e.message : String(e)} — will use beacon address ${beaconHost}:${beaconPort}`);
+    }
 }
 
 /**
@@ -87,8 +129,16 @@ async function sendWithRetry(
     retries = KAB_COMMAND_RETRIES,
     log?: (msg: string) => void,
 ): Promise<KabCommandResult> {
-    const host = device.host;
-    const port = device.kabCommandPort ?? device.port;
+    // Phase 1: Discovery handshake (once per device — populates kabLanIp / kabLanPort).
+    // The device only processes STATUS/POWER commands on its *discovered* LAN address;
+    // sending to the beacon-sender address without discovery first causes timeouts.
+    if (!device.kabLanIp) {
+        await performDiscovery(device, log);
+    }
+
+    // Use discovered LAN address if available; fall back to beacon host/port.
+    const host = device.kabLanIp ?? device.host;
+    const port = device.kabLanPort ?? device.kabCommandPort ?? device.port;
     let lastError: Error | undefined;
 
     log?.(`KAB sendWithRetry → ${device.id} @ ${host}:${port}  idInt=0x${(device.kabDeviceIdInt ?? 0).toString(16)}  key="${device.kabKey ?? ''}"  retries=${retries}`);

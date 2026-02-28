@@ -5,17 +5,17 @@
  *
  *  Offset  Size  Field
  *  ──────────────────────────────────────────────────────────────────────
- *   0      4     timeMark (big-endian Unix seconds)
- *   4      4     cmdCode  (23=primary, 22=secondary, 102=cloud)
+ * ALL integers are little-endian (O.d.g writes LE, O.d.c reads LE — confirmed
+ * from KabNetDefine.java / O/d.java in the decompiled APK).
+ *
+ *   0      4     timeMark (LE uint32 Unix seconds) — also the cipher key
+ *   4      4     cmdCode  (LE uint32: 23=primary, 22=secondary, 102=cloud)
  *   8      4     unused (0)
- *  12      4     deviceId int (big-endian hex, e.g. 0x78ABCDEF)
- *  16      8     deviceKey string (credential, null-padded)
- *  24      4     (0-pad to 28)
- *  28      4     field f (sequence counter, 0 for one-shot)
- *  32      4     field g (0)
- *  36     28     devicePass string (null-padded to 28 bytes)
+ *  12      4     deviceId int (LE uint32 — from beacon offset 36)
+ *  16     ~12    localKey string from beacon offset 152 (null-padded by Buffer.alloc)
+ *  36     ~10    localPass string from beacon offset 164 (null-padded by Buffer.alloc)
  *  64      4     field m (0)
- *  68      4     0x12345678 magic constant
+ *  68      4     field n (0)  — was incorrectly set to 0x12345678
  *  72      4     field o (0)
  *        *** CPPtoBytesEncryption([B)V applied to bytes 0–75 HERE ***
  *  76      4     subtype p
@@ -41,12 +41,14 @@
  *   131 = schedule extended (584-byte)
  */
 
-import { cppToBytesEncryption, cppParseBytesEncryption } from './cipher.js';
+import { cppToBytesEncryption } from './cipher.js';
 
 // ── Subtype (p) constants ─────────────────────────────────────────────────────
 export const KAB_CMD_POWER       = 106;
 export const KAB_CMD_DIM         = 107;
 export const KAB_CMD_STATUS      = 0;   // no subtype payload
+/** Subtype used in outgoing discovery handshake (cmdCode=23, j.p=105). */
+export const KAB_CMD_HELLO       = 105;
 export const KAB_CMD_SCHED_QUERY = 115;
 export const KAB_CMD_SCHED_SET   = 116;
 export const KAB_CMD_DISCOVERY   = 118;
@@ -57,18 +59,15 @@ export const KAB_CMDCODE_PRIMARY   = 23;
 export const KAB_CMDCODE_SECONDARY = 22;
 export const KAB_CMDCODE_CLOUD     = 102;
 
-// ── Magic ─────────────────────────────────────────────────────────────────────
-const MAGIC_N = 0x12345678;
-
 /**
  * Parameters needed to build any KAB command.
  */
 export interface KabCommandParams {
-    /** Integer form of device ID (e.g. parseInt("78ABCDEF", 16)). */
+    /** Integer form of device ID (from beacon offset 36, read as LE uint32). */
     deviceIdInt: number;
-    /** Credential key string (≤8 bytes, from beacon offset 80). */
+    /** Local auth key string from beacon offset 152 (12B, null-terminated ASCII). */
     deviceKey: string;
-    /** Password string (≤28 bytes, default "111111"). */
+    /** Local auth password from beacon offset 164 (32B, null-terminated ASCII). */
     devicePass: string;
     /** Command code: 23 (primary) or 22 (secondary). Default 23. */
     cmdCode?: number;
@@ -90,31 +89,30 @@ export function buildKabCommand(p: KabCommandParams): Buffer {
     const timeMark = Math.floor(Date.now() / 1000);
     const cmdCode  = p.cmdCode ?? KAB_CMDCODE_PRIMARY;
 
-    // Offset 0: timeMark (4 bytes, big-endian)
-    buf.writeUInt32BE(timeMark >>> 0, 0);
-    // Offset 4: cmdCode (4 bytes, big-endian)
-    buf.writeUInt32BE(cmdCode >>> 0, 4);
+    // All integers are little-endian (O.d.g in the Android app).
+    // Offset 0: timeMark (LE) — bytes 0-3 also serve as the cipher key
+    buf.writeUInt32LE(timeMark >>> 0, 0);
+    // Offset 4: cmdCode (LE)
+    buf.writeUInt32LE(cmdCode >>> 0, 4);
     // Offset 8: 0 (unused)
-    // Offset 12: deviceId int (4 bytes, big-endian)
-    buf.writeUInt32BE(p.deviceIdInt >>> 0, 12);
-    // Offset 16: deviceKey (8 bytes null-padded)
-    buf.write(p.deviceKey.slice(0, 8), 16, 'ascii');
-    // Offset 24-27: 0-pad (already zeroed)
-    // Offset 28: seqCounter / field f
-    buf.writeUInt32BE((p.seqCounter ?? 0) >>> 0, 28);
+    // Offset 12: deviceId int (LE)
+    buf.writeUInt32LE(p.deviceIdInt >>> 0, 12);
+    // Offset 16: localKey (full string, null-padded by Buffer.alloc(152,0))
+    buf.write(p.deviceKey, 16, 'ascii');
+    // Offset 28: seqCounter / field f (LE)
+    buf.writeUInt32LE((p.seqCounter ?? 0) >>> 0, 28);
     // Offset 32: field g = 0
-    // Offset 36: devicePass (28 bytes null-padded)
-    buf.write(p.devicePass.slice(0, 28), 36, 'ascii');
+    // Offset 36: localPass (full string, null-padded by Buffer.alloc(152,0))
+    buf.write(p.devicePass, 36, 'ascii');
     // Offset 64: field m = 0
-    // Offset 68: magic 0x12345678
-    buf.writeUInt32BE(MAGIC_N, 68);
+    // Offset 68: field n = 0  (was incorrectly 0x12345678)
     // Offset 72: field o = 0
 
-    // Apply encryption to bytes [0..75] in-place
+    // Apply encryption to bytes [16..71] in-place (key = bytes 0-3)
     cppToBytesEncryption(buf);
 
-    // Offset 76: subtype p (4 bytes, big-endian) — AFTER encryption
-    buf.writeUInt32BE(p.subtype >>> 0, 76);
+    // Offset 76: subtype p (LE) — written AFTER encryption
+    buf.writeUInt32LE(p.subtype >>> 0, 76);
 
     // Offset 80+: payload (written after encryption, not encrypted)
     if (p.payload && p.payload.length > 0) {
@@ -135,8 +133,8 @@ export function buildPowerCommand(
     on: boolean,
 ): Buffer {
     const payload = Buffer.alloc(8, 0);
-    payload.writeUInt32BE(on ? 1 : 0, 0); // powerState q
-    payload.writeUInt32BE(0, 4);           // dimmable r
+    payload.writeUInt32LE(on ? 1 : 0, 0); // powerState q (LE)
+    payload.writeUInt32LE(0, 4);           // dimmable r (LE)
 
     return buildKabCommand({
         deviceIdInt,
@@ -157,8 +155,8 @@ export function buildDimCommand(
     level: number, // 0-100
 ): Buffer {
     const payload = Buffer.alloc(8, 0);
-    payload.writeUInt32BE(level > 0 ? 1 : 0, 0); // powerState
-    payload.writeUInt32BE(level >>> 0, 4);         // dim level
+    payload.writeUInt32LE(level > 0 ? 1 : 0, 0); // powerState (LE)
+    payload.writeUInt32LE(level >>> 0, 4);         // dim level (LE)
 
     return buildKabCommand({
         deviceIdInt,
@@ -202,24 +200,85 @@ export interface KabResponse {
 }
 
 /**
+ * Discovery response returned by cmdCode=105 (NOT encrypted per APK b([B)[B decrypt).
+ * Carries the device's actual LAN IP and command port.
+ */
+export interface KabDiscoveryResponse {
+    /** Device LAN IP (4-byte network-order field at offset 24, decoded to dotted decimal). */
+    ip: string;
+    /** Device LAN command port (big-endian 16-bit at offset 28, per KabNetDefine$j.e()). */
+    port: number;
+    raw: Buffer;
+}
+
+/**
+ * Build the discovery handshake command: cmdCode=23, subtype/p=105.
+ *
+ * The Android app (a$d timer) sends this every second to the beacon-sender
+ * IP:beaconCmdPort.  The device replies with an UNENCRYPTED packet where
+ * cmdCode=105 and bytes [24–27] = LAN IP, bytes [28–29] = LAN port (BE 16-bit).
+ */
+export function buildDiscoveryHandshake(
+    deviceIdInt: number,
+    deviceKey: string,
+    devicePass: string,
+): Buffer {
+    return buildKabCommand({
+        deviceIdInt,
+        deviceKey,
+        devicePass,
+        cmdCode: KAB_CMDCODE_PRIMARY,
+        subtype: KAB_CMD_HELLO,   // j.p = 105
+    });
+}
+
+/**
+ * Attempt to parse a raw UDP packet as a cmdCode=105 discovery response.
+ * Returns null if the packet is too short or the cmdCode is not 105.
+ *
+ * The device sends cmdCode=105 responses WITHOUT encryption (APK b([B)[B skips
+ * CPPParseBytesEncryption when cmdCode==105).
+ */
+export function parseDiscoveryResponse(raw: Buffer): KabDiscoveryResponse | null {
+    if (raw.length < 32) return null;
+    const cmdCode = raw.readUInt32LE(4);
+    if (cmdCode !== 105) return null;
+    // Bytes 24–27: device LAN IP in network (big-endian) order
+    const ip = `${raw[24]}.${raw[25]}.${raw[26]}.${raw[27]}`;
+    // Bytes 28–29: device LAN port, big-endian 16-bit
+    // (KabNetDefine$j.e() swaps buf[offset] and buf[offset+1] before LE-reading)
+    const port = ((raw[28] & 0xff) << 8) | (raw[29] & 0xff);
+    return { ip, port, raw };
+}
+
+/**
  * Parse a KAB command response received on port 9090.
- * The response has the same 152-byte structure but bytes [56..71] are
- * decrypted by CPPParseBytesEncryption.
+ *
+ * The fields we care about — subtype (offset 76), powerState (offset 80),
+ * dimmable (offset 84) — lie OUTSIDE the encrypted range (bytes 16–71), so
+ * no decryption is needed for a valid status/power response.  The plain
+ * bytes are read directly from `raw`.
+ *
+ * cmdCode=105 discovery responses are handled by parseDiscoveryResponse();
+ * this function returns null for them.
  */
 export function parseKabResponse(raw: Buffer): KabResponse | null {
-    if (raw.length < 152) return null;
+    if (raw.length < 88) return null;
 
-    const dst = Buffer.alloc(raw.length, 0);
-    cppParseBytesEncryption(raw, dst);
+    // All response integers are little-endian; subtype/powerState/dimmable
+    // are at offsets 76/80/84 which are OUTSIDE the encrypted range (16–71).
+    const timeMark    = raw.readUInt32LE(0);
+    const cmdCode     = raw.readUInt32LE(4);
 
-    const timeMark  = dst.readUInt32BE(0);
-    const cmdCode   = dst.readUInt32BE(4);
-    const deviceIdInt = dst.readUInt32BE(12);
-    const subtype   = dst.readUInt32BE(76);
-    const powerState = dst.readUInt32BE(80);
-    const dimmable  = dst.readUInt32BE(84);
+    // Discovery responses have a different layout; reject them here.
+    if (cmdCode === 105) return null;
 
-    return { timeMark, cmdCode, deviceIdInt, subtype, powerState, dimmable, raw: dst };
+    const deviceIdInt = raw.readUInt32LE(12);
+    const subtype     = raw.readUInt32LE(76);
+    const powerState  = raw.readUInt32LE(80);
+    const dimmable    = raw.readUInt32LE(84);
+
+    return { timeMark, cmdCode, deviceIdInt, subtype, powerState, dimmable, raw };
 }
 
 /**
@@ -227,7 +286,7 @@ export function parseKabResponse(raw: Buffer): KabResponse | null {
  * Returns NaN if the format is not recognised.
  */
 export function parseDeviceIdInt(idStr: string): number {
-    const stripped = idStr.replace(/^ECO-/i, '').trim();
+    const stripped = idStr.replace(/^ECO-78/i, '').replace(/^ECO-/i, '').trim();
     const val = parseInt(stripped, 16);
     return val;
 }

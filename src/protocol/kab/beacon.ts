@@ -15,20 +15,19 @@
  *   Offset  7: 0x55 magic
  *   Offset  8: 0xAA magic
  *   Offset  9: "ECO Plugs" name (9 bytes, then nulls)
- *   Offset 20: checksum (int, big-endian) — also at offset 268
+ *   Offset 20: fields begin
  *   Offset 28: firmware version int
- *   Offset 44: deviceId string ASCII (16 bytes) — e.g. "ECO-78XXXXXX"
+ *   Offset 36: deviceIdInt  (LE uint32 — matches cVar.f2465H in app)
+ *   Offset 44: deviceId string ASCII (16 bytes) — e.g. "ECO-780XXXXX"
  *   Offset 60: device name string (16 bytes)
- *   Offset 76: command port int (big-endian)
- *   Offset 80: credential/key string (64 bytes) — used as deviceKey
+ *   Offset 76: command port int (LE uint32)
+ *   Offset 80: cloud hostname string (64 bytes) — e.g. "server1.eco-plugs.net"
  *   Offset 144: firmware version string (6 bytes)
- *   Offset 152: cloud server IP string (12 bytes)   [in notes: offset 164]
- *   Offset 164: cloud credential string (24 bytes)  [in notes: offset 164 for cloudCred]
- *   Offset 196: hex ID string (16 bytes)
- *   Offset 228: ASCII model string (8 bytes)
- *   Offset 240: powerState int (0=off, 1=on)
- *   Offset 244: dimmable int
- *   Offset 268: checksum int (in notes as d->A)
+ *   Offset 152: localKey string (12 bytes)  ← USED AS kabKey IN COMMANDS (cVar2.f2467J)
+ *   Offset 164: localPass string (32 bytes) ← USED AS password IN COMMANDS (cVar2.f2472O)
+ *   Offset 240: powerState int (LE uint32: 0=off, 1=on)
+ *   Offset 244: dimmable int (LE uint32)
+ *   Offset 268: checksum int
  *
  * 36-byte unencrypted ACK (sent FROM Homebridge back TO device):
  *   Offset  0: "ECO Plugs   " (12 ASCII bytes, space-padded)
@@ -42,8 +41,7 @@
 
 import * as dgram from 'dgram';
 import { cppParseBytesBroadcastEncryption } from './cipher.js';
-import { parseDeviceIdInt } from './packets.js';
-import { KAB_BEACON_PORT, KAB_COMMAND_PORT } from '../../settings.js';
+import { KAB_BEACON_PORT, KAB_COMMAND_PORT, KAB_DEVICE_PORT } from '../../settings.js';
 import type { DeviceInfo } from '../types.js';
 
 const ECO_MAGIC = [0x55, 0xaa, 0x55, 0xaa];
@@ -67,25 +65,41 @@ export function parseKabBeacon(decrypted: Buffer): DeviceInfo | null {
         return null;
     }
 
-    // Validate "ECO Plugs" starting at offset 9
-    const nameInPacket = decrypted.toString('ascii', 9, 9 + ECO_NAME.length);
-    if (nameInPacket !== ECO_NAME) return null;
+    // Validate "ECO Plugs" — some firmware versions place this at offset 9,
+    // others insert an extra null byte at offset 9 and start the string at
+    // offset 10.  This byte is ONLY padding before the name; all data fields
+    // (id, name, cmdPort, kabKey, …) remain at their original documented offsets
+    // in both variants.
+    const nameAt9  = decrypted.toString('ascii', 9,  9  + ECO_NAME.length);
+    const nameAt10 = decrypted.toString('ascii', 10, 10 + ECO_NAME.length);
+    if (nameAt9 !== ECO_NAME && nameAt10 !== ECO_NAME) return null;
 
-    const readStr  = (off: number, len: number) =>
-        decrypted.toString('ascii', off, off + len).replace(/\0/g, '').trim();
-    const readInt  = (off: number) => decrypted.readUInt32BE(off);
+    // Null-terminated ASCII (same as O.d.d in Android app)
+    const readStr  = (off: number, len: number) => {
+        let s = '';
+        for (let i = off; i < off + len && decrypted[i] !== 0; i++) s += String.fromCharCode(decrypted[i] & 0xff);
+        return s;
+    };
+    // All ints in the beacon are little-endian (O.d.c / O.d.g in Android app)
+    const readIntLE = (off: number) => decrypted.readUInt32LE(off);
 
     const idStr      = readStr(44, 16);
     const name       = readStr(60, 16) || idStr;
-    const cmdPort    = readInt(76) || KAB_COMMAND_PORT;
-    const credential = readStr(80, 64);
-    // First 8 bytes of credential used as deviceKey in commands
-    const deviceKey  = credential.slice(0, 8);
-    const powerState = readInt(240);
-    const dimmable   = readInt(244);
-    const cloudCred  = readStr(164, 24);
-
-    const deviceIdInt = parseDeviceIdInt(idStr);
+    const rawCmdPort = readIntLE(76);
+    const cmdPort    = (rawCmdPort > 0 && rawCmdPort < 65536) ? rawCmdPort : KAB_DEVICE_PORT;
+    // The device's LOCAL auth key is at offset 152 (12B) — KabNetManager sets
+    // cVar2.f2467J = beacon.f2512o = d(decrypted, 152, 12).  This is what the
+    // device checks when it receives a command packet.
+    const localKey   = readStr(152, 12);
+    // The LOCAL auth password is at offset 164 (32B) — cVar2.f2472O = beacon.f2513p
+    const localPass  = readStr(164, 32);
+    const powerState = readIntLE(240);
+    const dimmable   = readIntLE(244);
+    // Derive deviceIdInt from the ID string (e.g. "ECO-780C476D" → 0x0C476D).
+    // The prefix is actually "ECO-78", not just "ECO-", as seen in the Android app:
+    // String.format("ECO-78%06X", Integer.valueOf(deviceId))
+    const idHex       = idStr.replace(/^ECO-78/i, '').replace(/^ECO-/i, '').trim();
+    const deviceIdInt = readIntLE(36) || (parseInt(idHex, 16) >>> 0);
 
     return {
         id:             idStr || `KAB-${deviceIdInt.toString(16).toUpperCase()}`,
@@ -96,10 +110,10 @@ export function parseKabBeacon(decrypted: Buffer): DeviceInfo | null {
         status:         powerState !== 0,
         dimmable,
         kabDeviceIdInt: isNaN(deviceIdInt) ? 0 : deviceIdInt,
-        kabKey:         deviceKey,
-        kabPass:        '111111',  // default; overridden by config if set
+        kabKey:         localKey,   // from beacon offset 152 — actual local auth key
+        kabPass:        localPass,  // from beacon offset 164 — actual local auth pass
         kabCommandPort: cmdPort,
-        cloudCredential: cloudCred,
+        cloudCredential: readStr(80, 64),  // cloud hostname (for reference only)
     };
 }
 
@@ -158,14 +172,23 @@ export function startKabBeaconListener(
 
         device.host = remote.address;
         if (!device.port || device.port === 0) {
-            device.port = KAB_COMMAND_PORT;
+            device.port = KAB_DEVICE_PORT;
         }
 
         log?.(`KAB beacon from ${remote.address}: ${device.id} "${device.name}" port=${device.port}`);
 
-        // Send the ACK back to the device
+        // Send the ACK from KAB_COMMAND_PORT (9090), NOT from the beacon socket.
+        // The Android app uses a single socket bound to 9090 for both ACK and commands,
+        // so the device registers the controller as IP:9090 and replies there.
+        // If we send the ACK from port 10228, the device will ignore commands from 9090.
         const ack = buildBeaconAck();
-        sock.send(ack, 0, ack.length, remote.port, remote.address);
+        const ackSock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+        ackSock.bind(KAB_COMMAND_PORT, () => {
+            ackSock.send(ack, 0, ack.length, remote.port, remote.address, () => {
+                ackSock.close();
+                log?.(`KAB beacon ACK sent from port ${KAB_COMMAND_PORT} to ${remote.address}:${remote.port}`);
+            });
+        });
 
         onBeacon(device);
     });

@@ -37,6 +37,16 @@ export interface DeviceInfo {
     cloudCredential?: string;
     /** KAB command port read from beacon (may differ from default 9090). */
     kabCommandPort?: number;
+    /**
+     * LAN IP returned by the KAB cmdCode=105 discovery handshake.
+     * Populated after the first successful discovery; used for all subsequent commands.
+     */
+    kabLanIp?: string;
+    /**
+     * LAN command port returned by the KAB cmdCode=105 discovery handshake.
+     * Populated after the first successful discovery; used for all subsequent commands.
+     */
+    kabLanPort?: number;
 }
 
 /**

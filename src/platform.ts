@@ -28,6 +28,7 @@ import {
     DEFAULT_LOCAL_ONLY,
     DEFAULT_ENABLED,
     KAB_COMMAND_PORT,
+    KAB_DEVICE_PORT,
     type EcoPlugConfig,
     type DeviceConfig,
 } from './settings.js';
@@ -170,12 +171,12 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
                 id:             d.id,
                 name:           d.id,           // updated when beacon arrives
                 host:           d.host,
-                port:           d.commandPort ?? KAB_COMMAND_PORT,
+                port:           d.commandPort ?? KAB_DEVICE_PORT,
                 protocol:       (d.protocol === 'legacy' ? 'legacy' : 'kab'),
                 kabDeviceIdInt: isNaN(idInt) ? 0 : idInt,
                 kabKey:         d.kabKey   ?? '',
-                kabPass:        d.kabPass  ?? '111111',
-                kabCommandPort: d.commandPort ?? KAB_COMMAND_PORT,
+                kabPass:        d.kabPass  ?? '',
+                kabCommandPort: d.commandPort ?? KAB_DEVICE_PORT,
             };
             this.log.info(`Seeding static IP device: ${d.id} @ ${d.host}`);
             this.handleDiscoveredDevice(device, 'static-config');
@@ -208,11 +209,15 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             return;
         }
 
-        // Apply per-device config overrides
+        // Apply per-device config overrides.
+        // For kabKey/kabPass: the beacon is the authoritative source (its localKey
+        // at offset 152 and localPass at offset 164 are what the device verifies).
+        // Config values are only used as a fallback when the device field is empty
+        // (i.e. no beacon has been received yet, as in the static-config seed path).
         const override = this.deviceOverrideMap.get(device.id.toUpperCase());
         if (override) {
-            if (override.kabKey)      device.kabKey      = override.kabKey;
-            if (override.kabPass)     device.kabPass     = override.kabPass;
+            if (override.kabKey && !device.kabKey)   device.kabKey  = override.kabKey;
+            if (override.kabPass && !device.kabPass) device.kabPass = override.kabPass;
             if (override.commandPort) device.kabCommandPort = override.commandPort;
             if (override.protocol && override.protocol !== 'auto') {
                 device.protocol = override.protocol as 'legacy' | 'kab';

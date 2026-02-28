@@ -22,8 +22,10 @@ export const LEGACY_DISCOVERY_PORT  = 25;
 export const LEGACY_DISCOVERY_PORT2 = 5888;
 /** KABNetManager device beacon broadcast port. */
 export const KAB_BEACON_PORT        = 10228;
-/** KABNetManager primary command port. */
+/** KABNetManager command SOURCE port — we bind here so the device registers us at IP:9090. */
 export const KAB_COMMAND_PORT       = 9090;
+/** KABNetManager command DESTINATION port — the device listens here for incoming commands. */
+export const KAB_DEVICE_PORT        = 1022;
 /** KABNetManager fallback command port A. */
 export const KAB_COMMAND_PORT_B     = 6000;
 /** KABNetManager fallback command port B (legacy). */
@@ -49,7 +51,7 @@ export interface DeviceConfig {
      * updated as soon as a beacon is received from the device.
      */
     host?: string;
-    /** Override command port (default: 9090). */
+    /** Override command destination port on the device (default: 1022). */
     commandPort?: number;
     /** Override credential/key from beacon (default: auto from beacon). */
     kabKey?: string;
