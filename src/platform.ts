@@ -115,6 +115,11 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             return;
         }
 
+        this.log.info(
+            `Starting EcoPlug discovery (cached=${this.cachedAccessories.size}, localOnly=${this.localOnly}, ` +
+            `discoverInterval=${this.discoverIntervalMs / 1000}s, pollingInterval=${this.pollingIntervalMs / 1000}s)`,
+        );
+
         // Start legacy status listener (shared socket)
         this.legacyManager.startStatusListener((msg) => {
             const acc = this.cachedAccessories.get(msg.id);
@@ -128,7 +133,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
 
         // Start passive KAB beacon listener
         startKabBeaconListener(
-            (device) => this.handleDiscoveredDevice(device),
+            (device) => this.handleDiscoveredDevice(device, 'kab-beacon'),
             (msg)    => this.log.debug(msg),
         );
 
@@ -173,7 +178,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
                 kabCommandPort: d.commandPort ?? KAB_COMMAND_PORT,
             };
             this.log.info(`Seeding static IP device: ${d.id} @ ${d.host}`);
-            this.handleDiscoveredDevice(device);
+            this.handleDiscoveredDevice(device, 'static-config');
         }
     }
 
@@ -189,14 +194,17 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
 
         this.log.debug(`Discovery found ${devices.length} legacy device(s)`);
         for (const d of devices) {
-            this.handleDiscoveredDevice(d);
+            this.handleDiscoveredDevice(d, 'legacy-discovery');
         }
     }
 
     /** Common handler for both legacy and KAB discovered devices. */
-    private handleDiscoveredDevice(device: DeviceInfo): void {
+    private handleDiscoveredDevice(
+        device: DeviceInfo,
+        source: 'legacy-discovery' | 'kab-beacon' | 'static-config',
+    ): void {
         if (this.localOnly && !isPrivateAddress(device.host)) {
-            this.log.info(`Skipping non-local device ${device.id} @ ${device.host}`);
+            this.log.info(`Skipping non-local device ${device.id} @ ${device.host} (${source})`);
             return;
         }
 
@@ -214,14 +222,16 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         const existing = this.cachedAccessories.get(device.id);
         if (existing) {
             if (existing.context.host !== device.host) {
-                this.log.info(`Updated IP for ${device.id}: ${device.host}`);
+                this.log.info(`Updated IP for ${device.id}: ${existing.context.host} -> ${device.host} (${source})`);
                 existing.context.host = device.host;
                 existing.context.port = device.port;
                 this.mergeKabContext(existing, device);
+            } else {
+                this.log.debug(`Seen known device ${device.id} via ${source} @ ${device.host}`);
             }
             existing.context.lastUpdated = Date.now();
         } else {
-            this.log.info(`Adding new device: ${device.id} "${device.name}" @ ${device.host}`);
+            this.log.info(`Adding new device (${source}): ${device.id} "${device.name}" @ ${device.host}`);
             this.addAccessory(device);
         }
     }
@@ -268,6 +278,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
 
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
         this.cachedAccessories.set(device.id, accessory);
+        this.log.info(`Registered accessory ${device.id} (${device.protocol})`);
     }
 
     private configureServices(accessory: PlatformAccessory): void {
@@ -328,6 +339,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
     }
 
     private removeAccessory(acc: PlatformAccessory): void {
+        this.log.info(`Unregistering accessory ${acc.context.id}`);
         this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [acc]);
         this.cachedAccessories.delete(acc.context.id as string);
     }
