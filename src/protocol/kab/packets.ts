@@ -75,7 +75,7 @@ export interface KabCommandParams {
     subtype: number;
     /** Payload bytes written starting at offset 80. */
     payload?: Buffer;
-    /** Sequence counter (field f, offset 28). Default 0. */
+    /** Sequence counter (field n, offset 68). Default 0. */
     seqCounter?: number;
     /** Beacon offset 264 (field m, offset 64). Default 0. */
     beaconOffset264?: number;
@@ -101,14 +101,12 @@ export function buildKabCommand(p: KabCommandParams): Buffer {
     buf.writeUInt32LE(p.deviceIdInt >>> 0, 12);
     // Offset 16: localKey (full string, null-padded by Buffer.alloc(152,0))
     buf.write(p.deviceKey, 16, 'ascii');
-    // Offset 28: seqCounter / field f (LE)
-    buf.writeUInt32LE((p.seqCounter ?? 0) >>> 0, 28);
-    // Offset 32: field g = 0
     // Offset 36: localPass (full string, null-padded by Buffer.alloc(152,0))
     buf.write(p.devicePass, 36, 'ascii');
     // Offset 64: field m (from beacon offset 264)
     buf.writeUInt32LE((p.beaconOffset264 ?? 0) >>> 0, 64);
-    // Offset 68: field n = 0
+    // Offset 68: seqCounter / field n (LE)
+    buf.writeUInt32LE((p.seqCounter ?? 0) >>> 0, 68);
     // Offset 72: field o = 0
 
     // Apply encryption to bytes [16..71] in-place (key = bytes 0-3)
@@ -182,8 +180,6 @@ export function buildStatusQueryCommand(
     devicePass: string,
     beaconOffset264: number = 0,
 ): Buffer {
-    let seq = 1;
-
     return buildKabCommand({
         deviceIdInt,
         deviceKey,
@@ -191,7 +187,7 @@ export function buildStatusQueryCommand(
         cmdCode: KAB_CMDCODE_SECONDARY,
         subtype: KAB_CMD_POWER,
         payload: Buffer.alloc(8, 0),
-        seqCounter: seq,
+        seqCounter: 0x12345678,
         beaconOffset264,
     });
 }
@@ -233,15 +229,36 @@ export function buildDiscoveryHandshake(
     deviceKey: string,
     devicePass: string,
     beaconOffset264: number = 0,
+    attempt: number = 1,
 ): Buffer {
-    let seq = 1;
-
     return buildKabCommand({
         deviceIdInt,
         deviceKey,
         devicePass,
         cmdCode: KAB_CMDCODE_PRIMARY,
         subtype: KAB_CMD_HELLO,   // j.p = 105
+        seqCounter: attempt,
+        beaconOffset264,
+    });
+}
+
+/**
+ * Build the discovery acknowledgment packet sent back to the discovered LAN IP/port.
+ */
+export function buildDiscoveryAck(
+    deviceIdInt: number,
+    deviceKey: string,
+    devicePass: string,
+    beaconOffset264: number = 0,
+): Buffer {
+    let seq = 0x12345678;
+
+    return buildKabCommand({
+        deviceIdInt,
+        deviceKey,
+        devicePass,
+        cmdCode: KAB_CMDCODE_SECONDARY,
+        subtype: KAB_CMD_HELLO,
         seqCounter: seq,
         beaconOffset264,
     });

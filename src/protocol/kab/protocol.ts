@@ -16,6 +16,7 @@ import {
     buildStatusQueryCommand,
     buildDimCommand,
     buildDiscoveryHandshake,
+    buildDiscoveryAck,
     parseDiscoveryResponse,
     parseKabResponse,
     type KabResponse,
@@ -74,21 +75,38 @@ async function performDiscovery(device: DeviceInfo, log?: (msg: string) => void)
 
     log?.(`KAB discovery → ${beaconHost}:${beaconPort}  (cmdCode=23 subtype=105)`);
 
-    try {
-        const discBuf = buildDiscoveryHandshake(idInt, key, pass, device.kabBeaconOffset264);
-        const raw     = await sendAndReceive(discBuf, beaconHost, beaconPort, KAB_COMMAND_TIMEOUT_MS, log);
-        const disc    = parseDiscoveryResponse(raw);
-        if (disc && disc.ip !== '0.0.0.0' && disc.port > 0) {
-            device.kabLanIp   = disc.ip;
-            device.kabLanPort = disc.port;
-            log?.(`KAB discovered LAN address: ${disc.ip}:${disc.port}`);
-        } else {
-            log?.(`KAB discovery response unreadable — will use beacon address ${beaconHost}:${beaconPort}`);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const discBuf = buildDiscoveryHandshake(idInt, key, pass, device.kabBeaconOffset264, attempt);
+            const raw     = await sendAndReceive(discBuf, beaconHost, beaconPort, KAB_COMMAND_TIMEOUT_MS, log);
+            const disc    = parseDiscoveryResponse(raw);
+            if (disc && disc.ip !== '0.0.0.0' && disc.port > 0) {
+                device.kabLanIp   = disc.ip;
+                device.kabLanPort = disc.port;
+                log?.(`KAB discovered LAN address: ${disc.ip}:${disc.port}`);
+
+                // Send discovery acknowledgment
+                const ack = buildDiscoveryAck(idInt, key, pass, device.kabBeaconOffset264);
+                // Send and fire-and-forget
+                await kabSocket.sendAndReceive(ack, disc.ip, disc.port, 500).catch(() => {});
+                log?.('KAB discovery acknowledgment sent (cmdCode=22, subtype=105)');
+                return;
+            } else {
+                log?.(`KAB discovery response unreadable`);
+            }
+        } catch (e) {
+            log?.(`KAB discovery attempt ${attempt} failed: ${e instanceof Error ? e.message : String(e)}`);
         }
-    } catch (e) {
-        log?.(`KAB discovery failed: ${e instanceof Error ? e.message : String(e)} — will use beacon address ${beaconHost}:${beaconPort}`);
     }
+    log?.(`KAB discovery exhausted — will use beacon address ${beaconHost}:${beaconPort}`);
 }
+
+/**
+ * Throttle discovery so we don't burn 6s on every 10s poll.
+ * Stores the last discovery attempt time per device ID.
+ */
+const lastDiscoveryAttemptMs = new Map<string, number>();
+const DISCOVERY_REATTEMPT_INTERVAL_MS = 60_000; // retry discovery at most once per minute
 
 /**
  * Send a pre-built command buffer, retrying up to `retries` times.
@@ -99,10 +117,13 @@ async function sendWithRetry(
     retries = KAB_COMMAND_RETRIES,
     log?: (msg: string) => void,
 ): Promise<KabCommandResult> {
-    // Phase 1: Discovery handshake (once per device — populates kabLanIp / kabLanPort).
-    // The device only processes STATUS/POWER commands on its *discovered* LAN address;
-    // sending to the beacon-sender address without discovery first causes timeouts.
-    if (!device.kabLanIp) {
+    // Phase 1: Discovery handshake — populates kabLanIp / kabLanPort.
+    // Only attempt if we have no LAN address, and haven't tried recently.
+    const now = Date.now();
+    const lastAttempt = lastDiscoveryAttemptMs.get(device.id) ?? 0;
+    const shouldDiscover = !device.kabLanIp && (now - lastAttempt > DISCOVERY_REATTEMPT_INTERVAL_MS);
+    if (shouldDiscover) {
+        lastDiscoveryAttemptMs.set(device.id, now);
         await performDiscovery(device, log);
     }
 
