@@ -108,6 +108,15 @@ export async function kabSetPower(
     const key   = device.kabKey  ?? '';
     const pass  = device.kabPass ?? '111111';
 
+    if (!key) {
+        return {
+            ok: false,
+            error: new Error(
+                `KAB kabKey is empty for device ${device.id} — add kabKey (e.g. "keenfeng") to the devices[] config entry`,
+            ),
+        };
+    }
+
     const buf = buildPowerCommand(idInt, key, pass, on);
     return sendWithRetry(buf, device);
 }
@@ -119,6 +128,15 @@ export async function kabGetStatus(device: DeviceInfo): Promise<KabCommandResult
     const idInt = device.kabDeviceIdInt ?? 0;
     const key   = device.kabKey  ?? '';
     const pass  = device.kabPass ?? '111111';
+
+    if (!key) {
+        return {
+            ok: false,
+            error: new Error(
+                `KAB kabKey is empty for device ${device.id} — add kabKey (e.g. "keenfeng") to the devices[] config entry`,
+            ),
+        };
+    }
 
     const buf = buildStatusQueryCommand(idInt, key, pass);
     return sendWithRetry(buf, device);
@@ -134,6 +152,15 @@ export async function kabSetDim(
     const idInt = device.kabDeviceIdInt ?? 0;
     const key   = device.kabKey  ?? '';
     const pass  = device.kabPass ?? '111111';
+
+    if (!key) {
+        return {
+            ok: false,
+            error: new Error(
+                `KAB kabKey is empty for device ${device.id} — add kabKey (e.g. "keenfeng") to the devices[] config entry`,
+            ),
+        };
+    }
 
     const buf = buildDimCommand(idInt, key, pass, level);
     return sendWithRetry(buf, device);

@@ -225,10 +225,12 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
                 this.log.info(`Updated IP for ${device.id}: ${existing.context.host} -> ${device.host} (${source})`);
                 existing.context.host = device.host;
                 existing.context.port = device.port;
-                this.mergeKabContext(existing, device);
             } else {
                 this.log.debug(`Seen known device ${device.id} via ${source} @ ${device.host}`);
             }
+            // Always re-apply KAB context so config overrides (kabKey, kabPass,
+            // commandPort) are never silently lost to stale cached values.
+            this.mergeKabContext(existing, device);
             existing.context.lastUpdated = Date.now();
         } else {
             this.log.info(`Adding new device (${source}): ${device.id} "${device.name}" @ ${device.host}`);
@@ -378,6 +380,9 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         try {
             const result = await kabGetStatus(ctx as unknown as DeviceInfo);
             if (!result.ok || !result.response) {
+                if (result.error) {
+                    this.log.warn(`KAB status failed for ${ctx.id as string}: ${result.error.message}`);
+                }
                 return;
             }
 
@@ -387,7 +392,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
                ?.getCharacteristic(this.Characteristic.On)
                ?.updateValue(on);
         } catch (e) {
-            this.log.debug(`KAB status refresh failed for ${ctx.id}: ${(e as Error).message}`);
+            this.log.debug(`KAB status refresh failed for ${ctx.id as string}: ${(e as Error).message}`);
         }
     }
 }
