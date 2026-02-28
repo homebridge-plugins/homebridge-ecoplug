@@ -44,6 +44,8 @@ import { cppParseBytesBroadcastEncryption } from './cipher.js';
 import { KAB_BEACON_PORT, KAB_COMMAND_PORT, KAB_DEVICE_PORT } from '../../settings.js';
 import type { DeviceInfo } from '../types.js';
 
+import { kabSocket } from './socket.js';
+
 const ECO_MAGIC = [0x55, 0xaa, 0x55, 0xaa];
 const ECO_NAME  = 'ECO Plugs';
 
@@ -114,6 +116,7 @@ export function parseKabBeacon(decrypted: Buffer): DeviceInfo | null {
         kabPass:        localPass,  // from beacon offset 164 — actual local auth pass
         kabCommandPort: cmdPort,
         cloudCredential: readStr(80, 64),  // cloud hostname (for reference only)
+        kabBeaconOffset264: readIntLE(264),
     };
 }
 
@@ -182,12 +185,11 @@ export function startKabBeaconListener(
         // so the device registers the controller as IP:9090 and replies there.
         // If we send the ACK from port 10228, the device will ignore commands from 9090.
         const ack = buildBeaconAck();
-        const ackSock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-        ackSock.bind(KAB_COMMAND_PORT, () => {
-            ackSock.send(ack, 0, ack.length, remote.port, remote.address, () => {
-                ackSock.close();
-                log?.(`KAB beacon ACK sent from port ${KAB_COMMAND_PORT} to ${remote.address}:${remote.port}`);
-            });
+        if (log) kabSocket.setLogger(log);
+        kabSocket.send(ack, remote.address, remote.port).then(() => {
+            log?.(`KAB beacon ACK sent from port ${KAB_COMMAND_PORT} to ${remote.address}:${remote.port}`);
+        }).catch(err => {
+            log?.(`KAB beacon ACK send failed: ${err.message}`);
         });
 
         onBeacon(device);

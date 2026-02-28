@@ -77,6 +77,8 @@ export interface KabCommandParams {
     payload?: Buffer;
     /** Sequence counter (field f, offset 28). Default 0. */
     seqCounter?: number;
+    /** Beacon offset 264 (field m, offset 64). Default 0. */
+    beaconOffset264?: number;
 }
 
 /**
@@ -104,8 +106,9 @@ export function buildKabCommand(p: KabCommandParams): Buffer {
     // Offset 32: field g = 0
     // Offset 36: localPass (full string, null-padded by Buffer.alloc(152,0))
     buf.write(p.devicePass, 36, 'ascii');
-    // Offset 64: field m = 0
-    // Offset 68: field n = 0  (was incorrectly 0x12345678)
+    // Offset 64: field m (from beacon offset 264)
+    buf.writeUInt32LE((p.beaconOffset264 ?? 0) >>> 0, 64);
+    // Offset 68: field n = 0
     // Offset 72: field o = 0
 
     // Apply encryption to bytes [16..71] in-place (key = bytes 0-3)
@@ -131,6 +134,7 @@ export function buildPowerCommand(
     deviceKey: string,
     devicePass: string,
     on: boolean,
+    beaconOffset264: number = 0,
 ): Buffer {
     const payload = Buffer.alloc(8, 0);
     payload.writeUInt32LE(on ? 1 : 0, 0); // powerState q (LE)
@@ -142,6 +146,7 @@ export function buildPowerCommand(
         devicePass,
         subtype: KAB_CMD_POWER,
         payload,
+        beaconOffset264,
     });
 }
 
@@ -175,7 +180,10 @@ export function buildStatusQueryCommand(
     deviceIdInt: number,
     deviceKey: string,
     devicePass: string,
+    beaconOffset264: number = 0,
 ): Buffer {
+    let seq = 1;
+
     return buildKabCommand({
         deviceIdInt,
         deviceKey,
@@ -183,6 +191,8 @@ export function buildStatusQueryCommand(
         cmdCode: KAB_CMDCODE_SECONDARY,
         subtype: KAB_CMD_POWER,
         payload: Buffer.alloc(8, 0),
+        seqCounter: seq,
+        beaconOffset264,
     });
 }
 
@@ -222,13 +232,18 @@ export function buildDiscoveryHandshake(
     deviceIdInt: number,
     deviceKey: string,
     devicePass: string,
+    beaconOffset264: number = 0,
 ): Buffer {
+    let seq = 1;
+
     return buildKabCommand({
         deviceIdInt,
         deviceKey,
         devicePass,
         cmdCode: KAB_CMDCODE_PRIMARY,
         subtype: KAB_CMD_HELLO,   // j.p = 105
+        seqCounter: seq,
+        beaconOffset264,
     });
 }
 

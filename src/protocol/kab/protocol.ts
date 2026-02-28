@@ -23,6 +23,8 @@ import {
 import { KAB_COMMAND_PORT } from '../../settings.js';
 import type { DeviceInfo } from '../types.js';
 
+import { kabSocket } from './socket.js';
+
 export const KAB_COMMAND_TIMEOUT_MS = 2000;
 export const KAB_COMMAND_RETRIES    = 3;
 
@@ -47,41 +49,9 @@ function sendAndReceive(
     timeoutMs: number,
     log?: (msg: string) => void,
 ): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-        const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-        let settled = false;
-
-        const finish = (err?: Error, data?: Buffer) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            sock.close(() => {
-                if (err)  reject(err);
-                else      resolve(data!);
-            });
-        };
-
-        const timer = setTimeout(
-            () => finish(new Error(`KAB command timeout after ${timeoutMs}ms`)),
-            timeoutMs,
-        );
-
-        sock.on('error', (e) => finish(e));
-        sock.on('message', (msg: Buffer, rinfo) => {
-            log?.(`KAB rx ${msg.length}B from ${rinfo.address}:${rinfo.port}: ${msg.toString('hex')}`);
-            finish(undefined, msg);
-        });
-
-        // Bind to KAB_COMMAND_PORT so the device sees 9090 as the source port
-        // and replies to 9090 — exactly how the Android app works.
-        sock.bind(KAB_COMMAND_PORT, () => {
-            const addr = sock.address();
-            log?.(`KAB tx ${buf.length}B to ${host}:${port} (from port ${addr.port}): ${buf.toString('hex')}`);
-            sock.send(buf, 0, buf.length, port, host, (err) => {
-                if (err) finish(err);
-            });
-        });
-    });
+    if (log) kabSocket.setLogger(log);
+    // Let the global socket handle the UDP transaction
+    return kabSocket.sendAndReceive(buf, host, port, timeoutMs);
 }
 
 /**
@@ -105,7 +75,7 @@ async function performDiscovery(device: DeviceInfo, log?: (msg: string) => void)
     log?.(`KAB discovery → ${beaconHost}:${beaconPort}  (cmdCode=23 subtype=105)`);
 
     try {
-        const discBuf = buildDiscoveryHandshake(idInt, key, pass);
+        const discBuf = buildDiscoveryHandshake(idInt, key, pass, device.kabBeaconOffset264);
         const raw     = await sendAndReceive(discBuf, beaconHost, beaconPort, KAB_COMMAND_TIMEOUT_MS, log);
         const disc    = parseDiscoveryResponse(raw);
         if (disc && disc.ip !== '0.0.0.0' && disc.port > 0) {
@@ -182,7 +152,7 @@ export async function kabSetPower(
         };
     }
 
-    const buf = buildPowerCommand(idInt, key, pass, on);
+    const buf = buildPowerCommand(idInt, key, pass, on, device.kabBeaconOffset264);
     return sendWithRetry(buf, device, KAB_COMMAND_RETRIES, log);
 }
 
@@ -206,7 +176,7 @@ export async function kabGetStatus(
         };
     }
 
-    const buf = buildStatusQueryCommand(idInt, key, pass);
+    const buf = buildStatusQueryCommand(idInt, key, pass, device.kabBeaconOffset264);
     return sendWithRetry(buf, device, KAB_COMMAND_RETRIES, log);
 }
 

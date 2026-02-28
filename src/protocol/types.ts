@@ -47,6 +47,8 @@ export interface DeviceInfo {
      * Populated after the first successful discovery; used for all subsequent commands.
      */
     kabLanPort?: number;
+    /** From beacon offset 264. Field `m` in command packets at offset 64. */
+    kabBeaconOffset264?: number;
 }
 
 /**
