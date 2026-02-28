@@ -1,6 +1,6 @@
 {
   "name": "homebridge-ecoplug",
-  "version": "0.8.0",
+  "version": "1.0.0",
   "description": "Homebridge plugin to control ECO Plugs by KAB",
   "license": "ISC",
   "repository": {
@@ -26,8 +26,16 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
+    "prepare": "npm run build",
+    "prepack": "npm run build",
     "prepublishOnly": "npm run build"
   },
+  "files": [
+    "dist",
+    "config.schema.json",
+    "README.md",
+    "LICENSE.txt"
+  ],
   "main": "dist/index.js",
   "author": "Ian Caldwell"
 }
