@@ -289,8 +289,9 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             .onSet(async (value) => {
                 await this.setPowerState(accessory.context, value as boolean);
             })
-            .onGet(async () => {
-                return this.getPowerState(accessory.context);
+            .onGet(() => {
+                void this.refreshAccessoryState(accessory);
+                return this.getCachedPowerState(accessory.context.id as string);
             });
 
         accessory.on('identify', () => {
@@ -306,14 +307,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             this.log.debug('Polling', id, ctx.name);
 
             if (ctx.protocol === 'kab') {
-                kabGetStatus(ctx as DeviceInfo).then((result) => {
-                    if (!result.ok) return;
-                    const on = result.response!.powerState !== 0;
-                    acc.context.lastUpdated = Date.now();
-                    acc.getService(this.Service.Outlet)
-                       ?.getCharacteristic(this.Characteristic.On)
-                       ?.updateValue(on);
-                }).catch((e) => this.log.error('KAB poll error', id, e.message));
+                void this.refreshAccessoryState(acc);
             } else {
                 this.legacyManager.getStatus(ctx as DeviceInfo);
             }
@@ -359,23 +353,42 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         }
 
         if (this.cachedAccessories.has(ctx.id as string)) {
-            this.cachedAccessories.get(ctx.id as string)!.context.lastUpdated = Date.now();
+            const acc = this.cachedAccessories.get(ctx.id as string)!;
+            acc.context.lastUpdated = Date.now();
+            acc.getService(this.Service.Outlet)
+               ?.getCharacteristic(this.Characteristic.On)
+               ?.updateValue(on);
         }
     }
 
-    private async getPowerState(ctx: Record<string, unknown>): Promise<boolean> {
-        if (ctx.protocol === 'kab') {
-            const result = await kabGetStatus(ctx as unknown as DeviceInfo);
-            if (result.ok && result.response) {
-                return result.response.powerState !== 0;
-            }
-        }
-        // For legacy, the status is pushed via the UDP listener; return cached value.
-        const acc = this.cachedAccessories.get(ctx.id as string);
+    private getCachedPowerState(id: string): boolean {
+        const acc = this.cachedAccessories.get(id);
         const val = acc?.getService(this.Service.Outlet)
                         ?.getCharacteristic(this.Characteristic.On)
                         ?.value;
         return typeof val === 'boolean' ? val : false;
+    }
+
+    private async refreshAccessoryState(acc: PlatformAccessory): Promise<void> {
+        const ctx = acc.context as Record<string, unknown>;
+        if (ctx.protocol !== 'kab') {
+            return;
+        }
+
+        try {
+            const result = await kabGetStatus(ctx as unknown as DeviceInfo);
+            if (!result.ok || !result.response) {
+                return;
+            }
+
+            const on = result.response.powerState !== 0;
+            acc.context.lastUpdated = Date.now();
+            acc.getService(this.Service.Outlet)
+               ?.getCharacteristic(this.Characteristic.On)
+               ?.updateValue(on);
+        } catch (e) {
+            this.log.debug(`KAB status refresh failed for ${ctx.id}: ${(e as Error).message}`);
+        }
     }
 }
 
