@@ -31,7 +31,10 @@ import {
     KAB_DEVICE_PORT,
     type EcoPlugConfig,
     type DeviceConfig,
+    DEFAULT_KAB_COMMAND_TIMEOUT_MS,
+    DEFAULT_KAB_DISCOVERY_ATTEMPTS,
 } from './settings.js';
+ 
 
 import {
     createLegacyManager,
@@ -63,6 +66,10 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
     private readonly enabled:              boolean;
     private readonly deviceOverrideMap:    Map<string, DeviceConfig>;
     private staticDevices:                 DeviceConfig[] = [];
+    private readonly skipDiscoveryGlobally: boolean;
+    private readonly useBeaconDeviceIdGlobally: boolean;
+    private readonly kabCommandTimeoutMsGlobally: number;
+    private readonly kabDiscoveryAttemptsGlobally: number;
 
     constructor(
         public readonly log: Logger,
@@ -81,6 +88,10 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         this.deviceRemoveMs    = (cfg.deviceRemoveTimeout   ?? DEFAULT_DEVICE_REMOVE_TIMEOUT)    * 1000;
         this.localOnly         = cfg.localOnly  ?? DEFAULT_LOCAL_ONLY;
         this.enabled           = cfg.enabled    ?? DEFAULT_ENABLED;
+        this.skipDiscoveryGlobally = cfg.skipDiscovery ?? false;
+        this.useBeaconDeviceIdGlobally = cfg.useBeaconDeviceId ?? true;
+        this.kabCommandTimeoutMsGlobally = cfg.kabCommandTimeoutMs ?? DEFAULT_KAB_COMMAND_TIMEOUT_MS;
+        this.kabDiscoveryAttemptsGlobally = cfg.kabDiscoveryAttempts ?? DEFAULT_KAB_DISCOVERY_ATTEMPTS;
 
         const configuredDevices: DeviceConfig[] = [];
         const rawDevices = Array.isArray(cfg.devices)
@@ -206,6 +217,10 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
                 kabKey:         d.kabKey   ?? '',
                 kabPass:        d.kabPass  ?? '',
                 kabCommandPort: d.commandPort ?? KAB_DEVICE_PORT,
+                kabSkipDiscovery: d.skipDiscovery ?? this.skipDiscoveryGlobally,
+                kabUseBeaconId: d.useBeaconDeviceId ?? this.useBeaconDeviceIdGlobally,
+                kabCommandTimeoutMs: d.kabCommandTimeoutMs ?? this.kabCommandTimeoutMsGlobally,
+                kabDiscoveryAttempts: d.kabDiscoveryAttempts ?? this.kabDiscoveryAttemptsGlobally,
             };
             this.log.info(`Seeding static IP device: ${d.id} @ ${d.host}`);
             this.handleDiscoveredDevice(device, 'static-config');
@@ -286,6 +301,10 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             acc.context.kabPass        = device.kabPass;
             acc.context.kabCommandPort = device.kabCommandPort;
             acc.context.protocol       = 'kab';
+            acc.context.kabSkipDiscovery = device.kabSkipDiscovery;
+            acc.context.kabUseBeaconId = device.kabUseBeaconId;
+            acc.context.kabCommandTimeoutMs = device.kabCommandTimeoutMs;
+            acc.context.kabDiscoveryAttempts = device.kabDiscoveryAttempts;
         }
     }
 
@@ -306,6 +325,9 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             kabKey:        device.kabKey,
             kabPass:       device.kabPass,
             kabCommandPort: device.kabCommandPort,
+            kabSkipDiscovery: device.kabSkipDiscovery,
+            kabUseBeaconId: device.kabUseBeaconId,
+            kabCommandTimeoutMs: device.kabCommandTimeoutMs,
         };
 
         const pkg = require('../package.json') as { version: string };

@@ -49,6 +49,14 @@ export interface DeviceInfo {
     kabLanPort?: number;
     /** From beacon offset 264. Field `m` in command packets at offset 64. */
     kabBeaconOffset264?: number;
+    /** When true, skip the KAB discovery handshake and send commands to beacon host:port */
+    kabSkipDiscovery?: boolean;
+    /** When true (default), use the raw beacon integer id (offset 36) for commands */
+    kabUseBeaconId?: boolean;
+    /** Per-device override for KAB command timeout (ms) */
+    kabCommandTimeoutMs?: number;
+    /** Per-device override for number of discovery attempts */
+    kabDiscoveryAttempts?: number;
 }
 
 /**

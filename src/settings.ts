@@ -33,6 +33,10 @@ export const KAB_COMMAND_PORT_C     = 80;
 
 export const DEFAULT_LOCAL_ONLY    = true;
 export const DEFAULT_ENABLED       = true;
+/** Default KAB command timeout (ms) used when not overridden in config/device */
+export const DEFAULT_KAB_COMMAND_TIMEOUT_MS = 2000;
+/** Default number of discovery attempts the plugin performs per discovery run. */
+export const DEFAULT_KAB_DISCOVERY_ATTEMPTS = 3;
 
 /** Per‑device protocol preference. */
 export type ProtocolPreference = 'auto' | 'legacy' | 'kab';
@@ -59,6 +63,14 @@ export interface DeviceConfig {
     kabPass?: string;
     /** Force a specific protocol (default: "auto"). */
     protocol?: ProtocolPreference;
+    /** Skip the discovery handshake for this device */
+    skipDiscovery?: boolean;
+    /** Prefer using beacon raw device id (offset 36) */
+    useBeaconDeviceId?: boolean;
+    /** Per-device override for KAB command timeout (ms) */
+    kabCommandTimeoutMs?: number;
+    /** Per-device override for number of discovery attempts */
+    kabDiscoveryAttempts?: number;
 }
 
 /**
@@ -76,4 +88,12 @@ export interface EcoPlugConfig {
     deviceRemoveTimeout?: number;
     /** Per‑device overrides. */
     devices?: DeviceConfig[];
+    /** Skip the KAB discovery handshake globally. */
+    skipDiscovery?: boolean;
+    /** Use the beacon offset-36 integer device id by default. */
+    useBeaconDeviceId?: boolean;
+    /** Global KAB command timeout in milliseconds. */
+    kabCommandTimeoutMs?: number;
+    /** Global KAB discovery attempts to use when performing discovery. */
+    kabDiscoveryAttempts?: number;
 }

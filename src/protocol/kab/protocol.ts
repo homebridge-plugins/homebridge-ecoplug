@@ -19,14 +19,15 @@ import {
     buildDiscoveryAck,
     parseDiscoveryResponse,
     parseKabResponse,
+    parseDeviceIdInt,
     type KabResponse,
 } from './packets.js';
-import { KAB_COMMAND_PORT } from '../../settings.js';
+import { KAB_COMMAND_PORT, DEFAULT_KAB_COMMAND_TIMEOUT_MS } from '../../settings.js';
 import type { DeviceInfo } from '../types.js';
 
 import { kabSocket } from './socket.js';
 
-export const KAB_COMMAND_TIMEOUT_MS = 2000;
+export const KAB_COMMAND_TIMEOUT_MS = DEFAULT_KAB_COMMAND_TIMEOUT_MS;
 export const KAB_COMMAND_RETRIES    = 3;
 
 export interface KabCommandResult {
@@ -66,7 +67,14 @@ function sendAndReceive(
  * The cmdCode=105 response from the device is NOT encrypted (per APK b([B)[B)).
  */
 async function performDiscovery(device: DeviceInfo, log?: (msg: string) => void): Promise<void> {
-    const idInt = device.kabDeviceIdInt ?? 0;
+    if (device.kabSkipDiscovery) {
+        log?.('KAB discovery skipped by device config');
+        return;
+    }
+
+    const idInt = (device.kabUseBeaconId
+        ? (device.kabDeviceIdInt ?? parseDeviceIdInt(device.id))
+        : (parseDeviceIdInt(device.id) || device.kabDeviceIdInt || 0)) ?? 0;
     const key   = device.kabKey  ?? '';
     const pass  = device.kabPass ?? '111111';
 
@@ -75,10 +83,13 @@ async function performDiscovery(device: DeviceInfo, log?: (msg: string) => void)
 
     log?.(`KAB discovery → ${beaconHost}:${beaconPort}  (cmdCode=23 subtype=105)`);
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    const timeoutMs = device.kabCommandTimeoutMs ?? KAB_COMMAND_TIMEOUT_MS;
+
+    const maxAttempts = device.kabDiscoveryAttempts ?? 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             const discBuf = buildDiscoveryHandshake(idInt, key, pass, device.kabBeaconOffset264, attempt);
-            const raw     = await sendAndReceive(discBuf, beaconHost, beaconPort, KAB_COMMAND_TIMEOUT_MS, log);
+            const raw     = await sendAndReceive(discBuf, beaconHost, beaconPort, timeoutMs, log);
             const disc    = parseDiscoveryResponse(raw);
             if (disc && disc.ip !== '0.0.0.0' && disc.port > 0) {
                 device.kabLanIp   = disc.ip;
@@ -87,8 +98,8 @@ async function performDiscovery(device: DeviceInfo, log?: (msg: string) => void)
 
                 // Send discovery acknowledgment
                 const ack = buildDiscoveryAck(idInt, key, pass, device.kabBeaconOffset264);
-                // Send and fire-and-forget
-                await kabSocket.sendAndReceive(ack, disc.ip, disc.port, 500).catch(() => {});
+                // Send and fire-and-forget (use small timeout)
+                await kabSocket.sendAndReceive(ack, disc.ip, disc.port, Math.min(500, timeoutMs)).catch(() => {});
                 log?.('KAB discovery acknowledgment sent (cmdCode=22, subtype=105)');
                 return;
             } else {
@@ -121,7 +132,7 @@ async function sendWithRetry(
     // Only attempt if we have no LAN address, and haven't tried recently.
     const now = Date.now();
     const lastAttempt = lastDiscoveryAttemptMs.get(device.id) ?? 0;
-    const shouldDiscover = !device.kabLanIp && (now - lastAttempt > DISCOVERY_REATTEMPT_INTERVAL_MS);
+    const shouldDiscover = !device.kabSkipDiscovery && !device.kabLanIp && (now - lastAttempt > DISCOVERY_REATTEMPT_INTERVAL_MS);
     if (shouldDiscover) {
         lastDiscoveryAttemptMs.set(device.id, now);
         await performDiscovery(device, log);
@@ -132,11 +143,13 @@ async function sendWithRetry(
     const port = device.kabLanPort ?? device.kabCommandPort ?? device.port;
     let lastError: Error | undefined;
 
-    log?.(`KAB sendWithRetry → ${device.id} @ ${host}:${port}  idInt=0x${(device.kabDeviceIdInt ?? 0).toString(16)}  key="${device.kabKey ?? ''}"  retries=${retries}`);
+    const timeoutMs = device.kabCommandTimeoutMs ?? KAB_COMMAND_TIMEOUT_MS;
+    const idIntInfo = (device.kabUseBeaconId ? (device.kabDeviceIdInt ?? 0) : parseDeviceIdInt(device.id) || (device.kabDeviceIdInt ?? 0));
+    log?.(`KAB sendWithRetry → ${device.id} @ ${host}:${port}  idInt=0x${(idIntInfo).toString(16)}  key="${device.kabKey ?? ''}"  retries=${retries} timeout=${timeoutMs}ms`);
 
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
-            const raw = await sendAndReceive(buf, host, port, KAB_COMMAND_TIMEOUT_MS, log);
+            const raw = await sendAndReceive(buf, host, port, timeoutMs, log);
             const parsed = parseKabResponse(raw);
             if (parsed) {
                 log?.(`KAB response ok: cmdCode=${parsed.cmdCode} subtype=${parsed.subtype} powerState=${parsed.powerState}`);

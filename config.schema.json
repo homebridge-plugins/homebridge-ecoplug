@@ -52,6 +52,37 @@
 					"functionBody": "return model.advanceOptions === true;"
 				}
 			},
+			"skipDiscovery": {
+				"title": "Skip KAB Discovery Handshake",
+				"type": "boolean",
+				"required": false,
+				"default": false,
+				"description": "If enabled, the plugin will skip the KAB discovery handshake and send commands directly to the beacon host:port. Useful for devices that don't respond to discovery."
+			},
+			"useBeaconDeviceId": {
+				"title": "Use Beacon Device ID (offset 36)",
+				"type": "boolean",
+				"required": false,
+				"default": true,
+				"description": "When true, use the raw integer device ID read from the beacon (offset 36). Otherwise fall back to parsing the ID string."
+			},
+			"kabCommandTimeoutMs": {
+				"title": "KAB Command Timeout (ms)",
+				"type": "number",
+				"required": false,
+				"default": 2000,
+				"minimum": 200,
+				"description": "Timeout in milliseconds to wait for KAB command responses. Increase if your network is slow."
+			},
+			"kabDiscoveryAttempts": {
+				"title": "KAB Discovery Attempts",
+				"type": "number",
+				"required": false,
+				"default": 3,
+				"minimum": 1,
+				"maximum": 30,
+				"description": "How many discovery probe packets to send when performing KAB discovery. Smaller values are faster; larger values match the Android app behavior."
+			},
 			"discoverInterval": {
 				"title": "Discovery Interval (seconds)",
 				"type": "number",
