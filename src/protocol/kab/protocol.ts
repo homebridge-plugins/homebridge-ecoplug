@@ -173,7 +173,9 @@ export async function kabSetPower(
     on: boolean,
     log?: (msg: string) => void,
 ): Promise<KabCommandResult> {
-    const idInt = device.kabDeviceIdInt ?? 0;
+    const idInt = (device.kabUseBeaconId
+        ? (device.kabDeviceIdInt ?? parseDeviceIdInt(device.id))
+        : (parseDeviceIdInt(device.id) || device.kabDeviceIdInt || 0)) ?? 0;
     const key   = device.kabKey  ?? '';
     const pass  = device.kabPass ?? '111111';
 
@@ -197,7 +199,9 @@ export async function kabGetStatus(
     device: DeviceInfo,
     log?: (msg: string) => void,
 ): Promise<KabCommandResult> {
-    const idInt = device.kabDeviceIdInt ?? 0;
+    const idInt = (device.kabUseBeaconId
+        ? (device.kabDeviceIdInt ?? parseDeviceIdInt(device.id))
+        : (parseDeviceIdInt(device.id) || device.kabDeviceIdInt || 0)) ?? 0;
     const key   = device.kabKey  ?? '';
     const pass  = device.kabPass ?? '111111';
 

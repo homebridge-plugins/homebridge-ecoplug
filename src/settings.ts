@@ -34,7 +34,7 @@ export const KAB_COMMAND_PORT_C     = 80;
 export const DEFAULT_LOCAL_ONLY    = true;
 export const DEFAULT_ENABLED       = true;
 /** Default KAB command timeout (ms) used when not overridden in config/device */
-export const DEFAULT_KAB_COMMAND_TIMEOUT_MS = 2000;
+export const DEFAULT_KAB_COMMAND_TIMEOUT_MS = 4000;
 /** Default number of discovery attempts the plugin performs per discovery run. */
 export const DEFAULT_KAB_DISCOVERY_ATTEMPTS = 3;
 
