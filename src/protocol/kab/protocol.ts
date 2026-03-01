@@ -66,7 +66,7 @@ function sendAndReceive(
  *
  * The cmdCode=105 response from the device is NOT encrypted (per APK b([B)[B)).
  */
-async function performDiscovery(device: DeviceInfo, log?: (msg: string) => void): Promise<void> {
+export async function performDiscovery(device: DeviceInfo, log?: (msg: string) => void): Promise<void> {
     if (device.kabSkipDiscovery) {
         log?.('KAB discovery skipped by device config');
         return;
