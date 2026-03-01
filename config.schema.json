@@ -74,6 +74,23 @@
 				"minimum": 200,
 				"description": "Timeout in milliseconds to wait for KAB command responses. Increase if your network is slow."
 			},
+			"kabBindPort": {
+					"title": "KAB Source Bind Port",
+					"type": "number",
+					"required": false,
+					"default": 9090,
+					"minimum": 0,
+					"maximum": 65535,
+					"description": "UDP source port to bind for KAB commands. Set to 0 for an ephemeral port if your device only replies to non-9090 ports."
+				},
+				"kabMaxFailures": {
+					"title": "KAB Max Consecutive Failures",
+					"type": "number",
+					"required": false,
+					"default": 15,
+					"minimum": 1,
+					"description": "After this many consecutive status timeouts the plugin will stop polling the device until a successful command or discovery resets the counter."
+				},
 			"kabDiscoveryAttempts": {
 				"title": "KAB Discovery Attempts",
 				"type": "number",

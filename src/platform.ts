@@ -33,6 +33,7 @@ import {
     type DeviceConfig,
     DEFAULT_KAB_COMMAND_TIMEOUT_MS,
     DEFAULT_KAB_DISCOVERY_ATTEMPTS,
+    DEFAULT_KAB_MAX_FAILURES,
 } from './settings.js';
  
 
@@ -43,7 +44,8 @@ import {
     type DeviceInfo,
 } from './protocol/index.js';
 
-import { kabSetPower, kabGetStatus }    from './protocol/kab/protocol.js';
+import { kabSetPower, kabGetStatus } from './protocol/kab/protocol.js';
+import { kabSocket } from './protocol/kab/socket.js';
 import { parseDeviceIdInt }              from './protocol/kab/packets.js';
 
 export class EcoPlugPlatform implements DynamicPlatformPlugin {
@@ -71,6 +73,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
     private readonly useBeaconDeviceIdGlobally: boolean;
     private readonly kabCommandTimeoutMsGlobally: number;
     private readonly kabDiscoveryAttemptsGlobally: number;
+    private readonly kabMaxFailuresGlobally: number;
 
     constructor(
         public readonly log: Logger,
@@ -93,6 +96,11 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         this.useBeaconDeviceIdGlobally = cfg.useBeaconDeviceId ?? true;
         this.kabCommandTimeoutMsGlobally = cfg.kabCommandTimeoutMs ?? DEFAULT_KAB_COMMAND_TIMEOUT_MS;
         this.kabDiscoveryAttemptsGlobally = cfg.kabDiscoveryAttempts ?? DEFAULT_KAB_DISCOVERY_ATTEMPTS;
+        this.kabMaxFailuresGlobally = cfg.kabMaxFailures ?? DEFAULT_KAB_MAX_FAILURES;
+        // optional bind port for outgoing KAB commands; 0 means ephemeral
+        const bindPort = cfg.kabBindPort ?? KAB_COMMAND_PORT;
+        kabSocket.setBindPort(bindPort);
+        this.log.info(`KAB source bind port set to ${bindPort}`);
 
         const configuredDevices: DeviceConfig[] = [];
         const rawDevices = Array.isArray(cfg.devices)
@@ -221,6 +229,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
                 kabSkipDiscovery: d.skipDiscovery ?? this.skipDiscoveryGlobally,
                 kabUseBeaconId: d.useBeaconDeviceId ?? this.useBeaconDeviceIdGlobally,
                 kabCommandTimeoutMs: d.kabCommandTimeoutMs ?? this.kabCommandTimeoutMsGlobally,
+                kabMaxFailures: d.kabMaxFailures ?? this.kabMaxFailuresGlobally,
                 kabDiscoveryAttempts: d.kabDiscoveryAttempts ?? this.kabDiscoveryAttemptsGlobally,
             };
             this.log.info(`Seeding static IP device: ${d.id} @ ${d.host}`);
@@ -271,6 +280,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             if (override.kabKey && !device.kabKey)   device.kabKey  = override.kabKey;
             if (override.kabPass && !device.kabPass) device.kabPass = override.kabPass;
             if (override.commandPort) device.kabCommandPort = override.commandPort;
+            if (override.kabMaxFailures !== undefined) device.kabMaxFailures = override.kabMaxFailures;
             if (override.protocol && override.protocol !== 'auto') {
                 device.protocol = override.protocol as 'legacy' | 'kab';
             }
@@ -306,6 +316,9 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             acc.context.kabUseBeaconId = device.kabUseBeaconId;
             acc.context.kabCommandTimeoutMs = device.kabCommandTimeoutMs;
             acc.context.kabDiscoveryAttempts = device.kabDiscoveryAttempts;
+            acc.context.kabMaxFailures = device.kabMaxFailures ?? this.kabMaxFailuresGlobally;
+            // received an updated beacon; clear any past failure tally so we try again
+            acc.context.kabFailureCount = 0;
         }
     }
 
@@ -329,6 +342,8 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             kabSkipDiscovery: device.kabSkipDiscovery,
             kabUseBeaconId: device.kabUseBeaconId,
             kabCommandTimeoutMs: device.kabCommandTimeoutMs,
+            kabFailureCount: 0,
+            kabMaxFailures: device.kabMaxFailures ?? this.kabMaxFailuresGlobally,
         };
 
         const pkg = require('../package.json') as { version: string };
@@ -414,6 +429,8 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             if (!result.ok) {
                 throw new Error(result.error?.message ?? 'KAB command failed');
             }
+            // command succeeded, reset failure count
+            (ctx as any).kabFailureCount = 0;
         } else {
             this.legacyManager.setPower(ctx as unknown as DeviceInfo, on);
         }
@@ -436,8 +453,16 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
     }
 
     private async refreshAccessoryState(acc: PlatformAccessory): Promise<void> {
-        const ctx = acc.context as Record<string, unknown>;
+        const ctx = acc.context as Record<string, any>;
         if (ctx.protocol !== 'kab') {
+            return;
+        }
+
+        // If we've already failed too many times in a row, skip polling.
+        const maxFails = (ctx.kabMaxFailures as number) ?? this.kabMaxFailuresGlobally;
+        const failCount = ctx.kabFailureCount ?? 0;
+        if (failCount >= maxFails) {
+            this.log.debug(`Skipping KAB status for ${ctx.id as string}: ${failCount} consecutive failures (max=${maxFails})`);
             return;
         }
 
@@ -454,8 +479,16 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
                     if (result.error) {
                         this.log.warn(`KAB status failed for ${ctx.id as string}: ${result.error.message}`);
                     }
+                    // increment failure counter
+                    ctx.kabFailureCount = (ctx.kabFailureCount ?? 0) + 1;
+                    if (ctx.kabFailureCount === maxFails) {
+                        this.log.warn(`Giving up KAB status for ${ctx.id as string} after ${maxFails} failures`);
+                    }
                     return;
                 }
+
+                // success: reset failure count
+                ctx.kabFailureCount = 0;
 
                 const on = result.response.powerState !== 0;
                 acc.context.lastUpdated = Date.now();
@@ -464,6 +497,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
                    ?.updateValue(on);
             } catch (e) {
                 this.log.debug(`KAB status refresh failed for ${ctx.id as string}: ${(e as Error).message}`);
+                ctx.kabFailureCount = (ctx.kabFailureCount ?? 0) + 1;
             } finally {
                 this.statusInflight.delete(id);
             }

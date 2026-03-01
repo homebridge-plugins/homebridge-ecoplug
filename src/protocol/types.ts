@@ -57,6 +57,8 @@ export interface DeviceInfo {
     kabCommandTimeoutMs?: number;
     /** Per-device override for number of discovery attempts */
     kabDiscoveryAttempts?: number;
+    /** Per-device override for maximum consecutive status failures */
+    kabMaxFailures?: number;
 }
 
 /**

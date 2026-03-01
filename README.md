@@ -123,6 +123,8 @@ Use this when you want immediate startup registration without waiting for a beac
 | `discoverInterval` | `60` | Seconds between legacy discovery broadcasts (`0` disables) |
 | `deviceInactiveTimeout` | `180` | Mark accessory unavailable after this many seconds without response (`0` disables) |
 | `deviceRemoveTimeout` | `0` | Remove accessory after this many seconds without response (`0` disables) |
+| `kabMaxFailures` | `15` | **(KAB only)** Give up status polling after this many consecutive timeouts; resets on success or discovery |
+| `kabBindPort` | `9090` | **(KAB only)** UDP source port to bind for outgoing commands (`0` lets OS choose ephemeral port)
 
 ### Per-device options (`devices[]`)
 
@@ -134,6 +136,8 @@ Use this when you want immediate startup registration without waiting for a beac
 | `commandPort` | no | Override command port (typically `9090` KAB, `80` legacy) |
 | `kabKey` | no | KAB credential key (usually auto-populated from beacon) |
 | `kabPass` | no | KAB command password (default `111111`) |
+| `kabMaxFailures` | no | Override global max consecutive status failures for this device |
+| `kabBindPort` | no | Override source bind port just for this device (0 = ephemeral) |
 
 ## Firewall checklist
 

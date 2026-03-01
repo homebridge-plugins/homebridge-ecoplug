@@ -16,6 +16,18 @@ class KabSocketManager {
     private bindingData: Promise<void> | null = null;
     private currentError: Error | null = null;
     
+    /** Port to bind the socket to; defaults to KAB_COMMAND_PORT but can be
+     * overridden via configuration.  Setting to 0 tells the OS to choose an
+     * ephemeral port. */
+    private bindPort: number = KAB_COMMAND_PORT;
+
+    /** Override the source port used for KAB commands.  Call before sending
+     * any commands (e.g. from platform initialization). */
+    public setBindPort(port: number) {
+        this.bindPort = port;
+        // if socket already exists, user should restart Homebridge for simplicity
+    }
+    
     // pendingGroups maps a unique group key (host:port:bufHex) to all callers
     // that piggybacked that exact outgoing buffer.  pendingQueue preserves
     // send order per-host so responses are demultiplexed FIFO.
@@ -80,11 +92,11 @@ class KabSocketManager {
                 }
             });
 
-            sock.bind(KAB_COMMAND_PORT, () => {
+            sock.bind(this.bindPort, () => {
                 this.socket = sock;
                 this.socket.unref(); // don't block node from exiting
                 this.currentError = null;
-                this.log(`KAB global socket bound to port ${KAB_COMMAND_PORT}`);
+                this.log(`KAB global socket bound to port ${this.bindPort}`);
                 resolve();
             });
         });

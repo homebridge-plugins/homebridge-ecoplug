@@ -23,7 +23,7 @@ export const LEGACY_DISCOVERY_PORT2 = 5888;
 /** KABNetManager device beacon broadcast port. */
 export const KAB_BEACON_PORT        = 10228;
 /** KABNetManager command SOURCE port — we bind here so the device registers us at IP:9090. */
-export const KAB_COMMAND_PORT       = 9090;
+export const KAB_COMMAND_PORT       = 9090;  // default source port used for KAB commands
 /** KABNetManager command DESTINATION port — the device listens here for incoming commands. */
 export const KAB_DEVICE_PORT        = 1022;
 /** KABNetManager fallback command port A. */
@@ -37,6 +37,7 @@ export const DEFAULT_ENABLED       = true;
 export const DEFAULT_KAB_COMMAND_TIMEOUT_MS = 4000;
 /** Default number of discovery attempts the plugin performs per discovery run. */
 export const DEFAULT_KAB_DISCOVERY_ATTEMPTS = 3;
+export const DEFAULT_KAB_MAX_FAILURES        = 15; // how many consecutive status errors before giving up
 
 /** Per‑device protocol preference. */
 export type ProtocolPreference = 'auto' | 'legacy' | 'kab';
@@ -57,6 +58,8 @@ export interface DeviceConfig {
     host?: string;
     /** Override command destination port on the device (default: 1022). */
     commandPort?: number;
+    /** Per-device override for maximum consecutive status failures. */
+    kabMaxFailures?: number;
     /** Override credential/key from beacon (default: auto from beacon). */
     kabKey?: string;
     /** Override password for KAB commands (default: "111111"). */
@@ -96,4 +99,8 @@ export interface EcoPlugConfig {
     kabCommandTimeoutMs?: number;
     /** Global KAB discovery attempts to use when performing discovery. */
     kabDiscoveryAttempts?: number;
+    /** Maximum consecutive status failures before skipping further polls. */
+    kabMaxFailures?: number;
+    /** Bind port for outgoing KAB commands (0 for ephemeral). */
+    kabBindPort?: number;
 }
