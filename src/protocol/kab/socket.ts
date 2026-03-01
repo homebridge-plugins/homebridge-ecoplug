@@ -4,6 +4,10 @@ import { KAB_COMMAND_PORT } from '../../settings.js';
 interface PendingRequest {
     resolve: (data: Buffer) => void;
     reject: (err: Error) => void;
+}
+
+interface PendingGroup {
+    reqs: PendingRequest[];
     timer: NodeJS.Timeout;
 }
 
@@ -12,12 +16,11 @@ class KabSocketManager {
     private bindingData: Promise<void> | null = null;
     private currentError: Error | null = null;
     
-    // We only support ONE pending request at a time for a given host:port,
-    // or maybe just a global queue. 
-    // The safest is to maintain a map of `${rinfo.address}:${rinfo.port}` to an array of pending requests.
-    // However, device might reply from a different port? Actually device replies from its command port (usually 1022).
-    // Let's just use address as the routing key.
-    private pendingRequests = new Map<string, PendingRequest[]>();
+    // pendingGroups maps a unique group key (host:port:bufHex) to all callers
+    // that piggybacked that exact outgoing buffer.  pendingQueue preserves
+    // send order per-host so responses are demultiplexed FIFO.
+    private pendingGroups = new Map<string, PendingGroup>();
+    private pendingQueue  = new Map<string, string[]>(); // host -> [groupKey,...]
 
     private logFn?: (msg: string) => void;
 
@@ -47,27 +50,33 @@ class KabSocketManager {
                 this.currentError = err;
                 this.socket = null;
                 this.bindingData = null;
-                // Reject all pending requests
-                for (const [key, reqs] of this.pendingRequests.entries()) {
-                    for (const req of reqs) {
-                        clearTimeout(req.timer);
-                        req.reject(err);
-                    }
+                // Reject all pending groups
+                for (const [key, grp] of this.pendingGroups.entries()) {
+                    clearTimeout(grp.timer);
+                    for (const req of grp.reqs) req.reject(err);
                 }
-                this.pendingRequests.clear();
+                this.pendingGroups.clear();
+                this.pendingQueue.clear();
             });
 
             sock.on('message', (msg, rinfo) => {
                 this.log(`KAB rx ${msg.length}B from ${rinfo.address}:${rinfo.port}: ${msg.toString('hex')}`);
-                
-                const key = rinfo.address; // route by IP
-                const reqs = this.pendingRequests.get(key);
-                if (reqs && reqs.length > 0) {
-                    const req = reqs.shift()!; // fulfill the oldest request
-                    clearTimeout(req.timer);
-                    req.resolve(msg);
+                const host = rinfo.address;
+                const queue = this.pendingQueue.get(host);
+                if (queue && queue.length > 0) {
+                    const groupKey = queue.shift()!;
+                    const group = this.pendingGroups.get(groupKey);
+                    if (group) {
+                        clearTimeout(group.timer);
+                        for (const req of group.reqs) {
+                            req.resolve(msg);
+                        }
+                        this.pendingGroups.delete(groupKey);
+                    } else {
+                        this.log(`KAB rx dropped: No pending group for ${groupKey}`);
+                    }
                 } else {
-                    this.log(`KAB rx dropped: No pending requests for ${key}`);
+                    this.log(`KAB rx dropped: No pending requests for ${host}`);
                 }
             });
 
@@ -86,37 +95,54 @@ class KabSocketManager {
 
     public async sendAndReceive(buf: Buffer, host: string, port: number, timeoutMs: number): Promise<Buffer> {
         const sock = await this.getSocket();
-        
         return new Promise((resolve, reject) => {
-            const key = host;
-            
+            const bufHex = buf.toString('hex');
+            const groupKey = `${host}:${port}:${bufHex}`;
+
+            const req: PendingRequest = { resolve, reject };
+
+            // If a group for this identical buf is already pending, piggyback.
+            const existing = this.pendingGroups.get(groupKey);
+            if (existing) {
+                existing.reqs.push(req);
+                return;
+            }
+
+            // Create a new group and enqueue it for this host.
             const timer = setTimeout(() => {
-                // remove from queue
-                const reqs = this.pendingRequests.get(key);
-                if (reqs) {
-                    const idx = reqs.indexOf(req);
-                    if (idx !== -1) reqs.splice(idx, 1);
+                // timeout: reject all in group and cleanup
+                const grp = this.pendingGroups.get(groupKey);
+                if (grp) {
+                    for (const r of grp.reqs) {
+                        r.reject(new Error(`KAB command timeout after ${timeoutMs}ms for ${host}:${port}`));
+                    }
+                    this.pendingGroups.delete(groupKey);
                 }
-                reject(new Error(`KAB command timeout after ${timeoutMs}ms for ${host}:${port}`));
+                const q = this.pendingQueue.get(host);
+                if (q) {
+                    const idx = q.indexOf(groupKey);
+                    if (idx !== -1) q.splice(idx, 1);
+                }
             }, timeoutMs);
 
-            const req: PendingRequest = { resolve, reject, timer };
-            
-            if (!this.pendingRequests.has(key)) {
-                this.pendingRequests.set(key, []);
-            }
-            this.pendingRequests.get(key)!.push(req);
+            this.pendingGroups.set(groupKey, { reqs: [req], timer });
+            if (!this.pendingQueue.has(host)) this.pendingQueue.set(host, []);
+            this.pendingQueue.get(host)!.push(groupKey);
 
-            this.log(`KAB tx ${buf.length}B to ${host}:${port}: ${buf.toString('hex')}`);
+            this.log(`KAB tx ${buf.length}B to ${host}:${port}: ${bufHex}`);
             sock.send(buf, 0, buf.length, port, host, (err) => {
                 if (err) {
-                    clearTimeout(timer);
-                    const reqs = this.pendingRequests.get(key);
-                    if (reqs) {
-                        const idx = reqs.indexOf(req);
-                        if (idx !== -1) reqs.splice(idx, 1);
+                    const grp = this.pendingGroups.get(groupKey);
+                    if (grp) {
+                        clearTimeout(grp.timer);
+                        for (const r of grp.reqs) r.reject(err);
+                        this.pendingGroups.delete(groupKey);
                     }
-                    reject(err);
+                    const q = this.pendingQueue.get(host);
+                    if (q) {
+                        const idx = q.indexOf(groupKey);
+                        if (idx !== -1) q.splice(idx, 1);
+                    }
                 }
             });
         });

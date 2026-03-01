@@ -66,6 +66,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
     private readonly enabled:              boolean;
     private readonly deviceOverrideMap:    Map<string, DeviceConfig>;
     private staticDevices:                 DeviceConfig[] = [];
+    private readonly statusInflight:       Map<string, Promise<void>> = new Map();
     private readonly skipDiscoveryGlobally: boolean;
     private readonly useBeaconDeviceIdGlobally: boolean;
     private readonly kabCommandTimeoutMsGlobally: number;
@@ -440,23 +441,36 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             return;
         }
 
-        try {
-            const result = await kabGetStatus(ctx as unknown as DeviceInfo, (msg) => this.log.debug(msg));
-            if (!result.ok || !result.response) {
-                if (result.error) {
-                    this.log.warn(`KAB status failed for ${ctx.id as string}: ${result.error.message}`);
-                }
-                return;
-            }
-
-            const on = result.response.powerState !== 0;
-            acc.context.lastUpdated = Date.now();
-            acc.getService(this.Service.Outlet)
-               ?.getCharacteristic(this.Characteristic.On)
-               ?.updateValue(on);
-        } catch (e) {
-            this.log.debug(`KAB status refresh failed for ${ctx.id as string}: ${(e as Error).message}`);
+        const id = ctx.id as string;
+        if (this.statusInflight.has(id)) {
+            this.log.debug(`KAB status already in-flight for ${id}, skipping`);
+            return;
         }
+
+        const req = (async () => {
+            try {
+                const result = await kabGetStatus(ctx as unknown as DeviceInfo, (msg) => this.log.debug(msg));
+                if (!result.ok || !result.response) {
+                    if (result.error) {
+                        this.log.warn(`KAB status failed for ${ctx.id as string}: ${result.error.message}`);
+                    }
+                    return;
+                }
+
+                const on = result.response.powerState !== 0;
+                acc.context.lastUpdated = Date.now();
+                acc.getService(this.Service.Outlet)
+                   ?.getCharacteristic(this.Characteristic.On)
+                   ?.updateValue(on);
+            } catch (e) {
+                this.log.debug(`KAB status refresh failed for ${ctx.id as string}: ${(e as Error).message}`);
+            } finally {
+                this.statusInflight.delete(id);
+            }
+        })();
+
+        this.statusInflight.set(id, req);
+        await req;
     }
 }
 
