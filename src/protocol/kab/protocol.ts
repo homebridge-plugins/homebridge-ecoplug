@@ -174,6 +174,26 @@ async function sendWithRetry(
         }
     }
 
+    // priming step: certain devices stop listening after a few packets.  we'll
+    // send a couple of extra discovery packets (broadcast + ephemeral source)
+    // once per device lifetime, then retry the entire sequence.
+    if (!device.kabPrimed) {
+        device.kabPrimed = true;
+        log?.('KAB priming device with broadcast/ephemeral discovery');
+        try {
+            // broadcast
+            await kabSocket.sendAndReceive(buf, '255.255.255.255', port, timeoutMs).catch(() => {});
+            // ephemeral source port
+            const origBind = (kabSocket as any).bindPort;
+            kabSocket.setBindPort(0);
+            await kabSocket.sendAndReceive(buf, host, port, timeoutMs).catch(() => {});
+            kabSocket.setBindPort(origBind);
+        } catch {
+            // ignore
+        }
+        return sendWithRetry(buf, device, retries, log, false);
+    }
+
     return { ok: false, error: lastError };
 }
 

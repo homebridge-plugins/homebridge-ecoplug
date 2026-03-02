@@ -59,6 +59,8 @@ export interface DeviceInfo {
     kabDiscoveryAttempts?: number;
     /** Per-device override for maximum consecutive status failures */
     kabMaxFailures?: number;
+    /** Internal: whether we've previously sent a priming burst to this device */
+    kabPrimed?: boolean;
 }
 
 /**
