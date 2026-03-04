@@ -146,7 +146,8 @@ async function sendWithRetry(
 
     const timeoutMs = device.kabCommandTimeoutMs ?? KAB_COMMAND_TIMEOUT_MS;
     const idIntInfo = (device.kabUseBeaconId ? (device.kabDeviceIdInt ?? 0) : parseDeviceIdInt(device.id) || (device.kabDeviceIdInt ?? 0));
-    log?.(`KAB sendWithRetry → ${device.id} @ ${host}:${port}  idInt=0x${(idIntInfo).toString(16)}  key="${device.kabKey ?? ''}"  retries=${retries} timeout=${timeoutMs}ms`);
+    const b264 = device.kabBeaconOffset264 ?? 0;
+    log?.(`KAB sendWithRetry → ${device.id} @ ${host}:${port}  idInt=0x${(idIntInfo).toString(16)}  key="${device.kabKey ?? ''}"  retries=${retries} timeout=${timeoutMs}ms beaconOffset=0x${b264.toString(16)}`);
 
     for (let attempt = 0; attempt < retries; attempt++) {
         try {

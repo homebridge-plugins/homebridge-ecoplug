@@ -293,7 +293,10 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         }
 
         const existing = this.cachedAccessories.get(device.id);
+        let acc: PlatformAccessory | undefined;
+
         if (existing) {
+            acc = existing;
             if (existing.context.host !== device.host) {
                 this.log.info(`Updated IP for ${device.id}: ${existing.context.host} -> ${device.host} (${source})`);
                 existing.context.host = device.host;
@@ -308,6 +311,13 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         } else {
             this.log.info(`Adding new device (${source}): ${device.id} "${device.name}" @ ${device.host}`);
             this.addAccessory(device);
+            acc = this.cachedAccessories.get(device.id)!;
+        }
+
+        // if the beacon supplied an immediate status we can update HomeKit
+        if (device.status !== undefined && acc) {
+            acc.getService(this.Service.Outlet)
+               ?.updateCharacteristic(this.Characteristic.On, device.status);
         }
     }
 
