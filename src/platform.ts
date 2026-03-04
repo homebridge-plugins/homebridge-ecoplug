@@ -98,7 +98,11 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         this.deviceRemoveMs    = (cfg.deviceRemoveTimeout   ?? DEFAULT_DEVICE_REMOVE_TIMEOUT)    * 1000;
         this.localOnly         = cfg.localOnly  ?? DEFAULT_LOCAL_ONLY;
         this.enabled           = cfg.enabled    ?? DEFAULT_ENABLED;
-        this.skipDiscoveryGlobally = cfg.skipDiscovery ?? false;
+        // by default we skip the discovery handshake because
+        // many KAB devices either ignore it or return incorrect IP/port
+        // values; if the user explicitly wants it they can set
+        // skipDiscovery=false in config.
+        this.skipDiscoveryGlobally = cfg.skipDiscovery ?? true;
         this.useBeaconDeviceIdGlobally = cfg.useBeaconDeviceId ?? true;
         this.kabCommandTimeoutMsGlobally = cfg.kabCommandTimeoutMs ?? DEFAULT_KAB_COMMAND_TIMEOUT_MS;
         this.kabDiscoveryAttemptsGlobally = cfg.kabDiscoveryAttempts ?? DEFAULT_KAB_DISCOVERY_ATTEMPTS;
@@ -270,6 +274,12 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             return;
         }
         device.id = deviceId;
+        // if we learned the IP/port via a beacon, treat it as a known LAN
+        // address so the command layer will skip the discovery handshake.
+        if (device.protocol === 'kab' && source === 'kab-beacon') {
+            device.kabLanIp = device.host;
+            device.kabLanPort = device.port;
+        }
 
         if (this.localOnly && !isPrivateAddress(device.host)) {
             this.log.info(`Skipping non-local device ${device.id} @ ${device.host} (${source})`);
@@ -451,6 +461,13 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             if (!result.ok) {
                 throw new Error(result.error?.message ?? 'KAB command failed');
             }
+            // some devices reply with powerState=0 even when the command is
+            // accepted; treat that as a failure rather than optimistically
+            // flipping the switch in HomeKit.
+            if (result.response && result.response.powerState !== (on ? 1 : 0)) {
+                this.log.warn(`KAB power command returned unexpected state ${result.response.powerState}`);
+                throw new Error('KAB device did not acknowledge requested power state');
+            }
             // command succeeded, reset failure count
             (ctx as any).kabFailureCount = 0;
         } else {
@@ -463,6 +480,17 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             acc.getService(this.Service.Outlet)
                ?.getCharacteristic(this.Characteristic.On)
                ?.updateValue(on);
+
+            // prevent the immediate onGet-triggered refresh from firing while
+            // the device may still be applying the command.  we insert a dummy
+            // entry in `statusInflight` that lasts a fraction of a second.
+            const id = ctx.id as string;
+            this.statusInflight.set(id, Promise.resolve());
+            // some devices take a little longer to actually toggle the relay;
+            // give 1 second before allowing a status query to run.  this value
+            // is arbitrary but safe, and eliminates the immediate flip‑back
+            // observed with faster polls.
+            setTimeout(() => { this.statusInflight.delete(id); }, 1000);
         }
     }
 

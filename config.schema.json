@@ -56,8 +56,8 @@
 				"title": "Skip KAB Discovery Handshake",
 				"type": "boolean",
 				"required": false,
-				"default": false,
-				"description": "If enabled, the plugin will skip the KAB discovery handshake and send commands directly to the beacon host:port. Useful for devices that don't respond to discovery."
+				"default": true,
+				"description": "If enabled, the plugin will skip the KAB discovery handshake and send commands directly to the beacon host:port. Useful for devices that don't respond to discovery (e.g. ones that advertise an incorrect address)."
 			},
 			"useBeaconDeviceId": {
 				"title": "Use Beacon Device ID (offset 36)",
