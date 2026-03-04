@@ -49,20 +49,12 @@ function sendAndReceive(
     host: string,
     port: number,
     timeoutMs: number,
-    filterOrLog?: ((msg: Buffer, rinfo: dgram.RemoteInfo) => boolean) | ((msg: string) => void),
-    maybeLog?: (msg: string) => void,
+    filter?: (msg: Buffer, rinfo: dgram.RemoteInfo) => boolean,
+    log?: (msg: string) => void,
 ): Promise<Buffer> {
-    let filter: ((msg: Buffer, rinfo: dgram.RemoteInfo) => boolean) | undefined;
-    let log: ((msg: string) => void) | undefined;
-
-    if (filterOrLog) {
-        if (typeof filterOrLog === 'function' && filterOrLog.length === 2) {
-            filter = filterOrLog as (msg: Buffer, rinfo: dgram.RemoteInfo) => boolean;
-            log = maybeLog;
-        } else {
-            log = filterOrLog as (msg: string) => void;
-        }
-    }
+    // if caller provided a filter function, it will be in the fifth argument;
+    // the sixth argument, if present, is the logger.  This avoids relying on
+    // `.length` which is unreliable for arrow functions.
     if (log) kabSocket.setLogger(log);
     // Let the global socket handle the UDP transaction
     return kabSocket.sendAndReceive(buf, host, port, timeoutMs, filter);
