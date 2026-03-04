@@ -145,6 +145,9 @@ export function buildPowerCommand(
         subtype: KAB_CMD_POWER,
         payload,
         beaconOffset264,
+        // Android app uses seq value 0x12345678 for all commands; some
+        // devices ignore packets with seq=0 so we replicate that here.
+        seqCounter: 0x12345678,
     });
 }
 
@@ -167,6 +170,7 @@ export function buildDimCommand(
         devicePass,
         subtype: KAB_CMD_DIM,
         payload,
+        seqCounter: 0x12345678,
     });
 }
 

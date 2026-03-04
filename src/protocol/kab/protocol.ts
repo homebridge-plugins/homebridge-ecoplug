@@ -99,7 +99,10 @@ export async function performDiscovery(device: DeviceInfo, log?: (msg: string) =
                 beaconHost,
                 beaconPort,
                 timeoutMs,
-                (msg: Buffer) => parseDiscoveryResponse(msg) !== null,
+                (msg: Buffer) => {
+                    if (msg.equals(discBuf)) return false;
+                    return parseDiscoveryResponse(msg) !== null;
+                },
                 log,
             );
             const disc = parseDiscoveryResponse(raw);
@@ -170,10 +173,13 @@ async function sendWithRetry(
                 host,
                 port,
                 timeoutMs,
-                // accept any valid KAB response (cmdCode≠105); device often
-                // replies with subtype=105 even for power commands, so
-                // matching on subtype would drop all replies.
+                // accept any valid KAB response (cmdCode≠105) that isn’t a
+                // byte‑for‑byte copy of the packet we just sent.  the
+                // kernel sometimes loops back outgoing datagrams to us when
+                // SO_REUSEPORT is enabled, and earlier we were erroneously
+                // treating our self‑echo as the device’s reply.
                 (msg: Buffer) => {
+                    if (msg.equals(buf)) return false;            // ignore echo
                     const parsed = parseKabResponse(msg);
                     return parsed !== null;
                 },

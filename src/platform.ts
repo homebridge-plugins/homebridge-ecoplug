@@ -326,6 +326,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
 
         // if the beacon supplied an immediate status we can update HomeKit
         if (device.status !== undefined && acc) {
+            this.log.debug(`Beacon reports powerState=${device.status ? 'ON' : 'OFF'}`);
             acc.getService(this.Service.Outlet)
                ?.updateCharacteristic(this.Characteristic.On, device.status);
         }
@@ -457,18 +458,44 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         this.log.info(`Setting ${ctx.id} "${ctx.name}" → ${on ? 'ON' : 'OFF'}`);
 
         if (ctx.protocol === 'kab') {
+            // early bail if we've flagged this device as non‑responsive
+            if ((ctx as any).kabUnreliable) {
+                throw new Error('KAB device has previously failed to obey commands');
+            }
+
             const result = await kabSetPower(ctx as unknown as DeviceInfo, on, (msg) => this.log.debug(msg));
             if (!result.ok) {
                 throw new Error(result.error?.message ?? 'KAB command failed');
             }
-            // some devices reply with powerState=0 even when the command is
-            // accepted; treat that as a failure rather than optimistically
-            // flipping the switch in HomeKit.
-            if (result.response && result.response.powerState !== (on ? 1 : 0)) {
-                this.log.warn(`KAB power command returned unexpected state ${result.response.powerState}`);
-                throw new Error('KAB device did not acknowledge requested power state');
+
+            // command sent; now immediately poll the device for real state.
+            try {
+                const stat = await kabGetStatus(ctx as unknown as DeviceInfo, (msg) => this.log.debug(msg));
+                if (stat.ok && stat.response) {
+                    const actual = stat.response.powerState !== 0;
+                    this.log.debug(`Post-command status reports powerState=${stat.response.powerState}`);
+                    if (actual !== on) {
+                        this.log.warn(`After power command, actual state ${actual ? 'ON' : 'OFF'} differs from requested ${on ? 'ON' : 'OFF'}`);
+                        on = actual; // update value we'll report to HomeKit
+                        // increment consecutive failure counter
+                        (ctx as any).kabConsecCmdFails = ((ctx as any).kabConsecCmdFails ?? 0) + 1;
+                        if ((ctx as any).kabConsecCmdFails >= 3) {
+                            (ctx as any).kabUnreliable = true;
+                            this.log.error(`Marking device ${ctx.id} as unreliable after ${(ctx as any).kabConsecCmdFails} failed commands`);
+                        }
+                    } else {
+                        // success, reset failure count
+                        ctx.kabConsecCmdFails = 0;
+                    }
+                    if (result.response && actual !== (result.response.powerState === 1)) {
+                        this.log.warn('Power command response did not match subsequent status');
+                    }
+                }
+            } catch (e) {
+                this.log.debug(`Post-command status check failed: ${(e as Error).message}`);
             }
-            // command succeeded, reset failure count
+
+            // reset failure count regardless; status check above updates 'on'
             (ctx as any).kabFailureCount = 0;
         } else {
             this.legacyManager.setPower(ctx as unknown as DeviceInfo, on);
