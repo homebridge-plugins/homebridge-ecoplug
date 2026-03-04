@@ -9,6 +9,10 @@ interface PendingRequest {
 interface PendingGroup {
     reqs: PendingRequest[];
     timer: NodeJS.Timeout;
+    /** Optional validation function called for every incoming packet before
+     * resolving the group.  If it returns false the message is ignored and the
+     * group remains pending. */
+    filter?: (msg: Buffer, rinfo: dgram.RemoteInfo) => boolean;
 }
 
 class KabSocketManager {
@@ -85,21 +89,31 @@ class KabSocketManager {
                 this.log(`KAB rx ${msg.length}B from ${rinfo.address}:${rinfo.port}: ${msg.toString('hex')}`);
                 const host = rinfo.address;
                 const queue = this.pendingQueue.get(host);
-                if (queue && queue.length > 0) {
-                    const groupKey = queue.shift()!;
-                    const group = this.pendingGroups.get(groupKey);
-                    if (group) {
-                        clearTimeout(group.timer);
-                        for (const req of group.reqs) {
-                            req.resolve(msg);
-                        }
-                        this.pendingGroups.delete(groupKey);
-                    } else {
-                        this.log(`KAB rx dropped: No pending group for ${groupKey}`);
-                    }
-                } else {
+                if (!queue || queue.length === 0) {
                     this.log(`KAB rx dropped: No pending requests for ${host}`);
+                    return;
                 }
+
+                // walk the queue looking for a group whose filter (if any) accepts
+                // this message.  keep the first matching entry in FIFO order.
+                for (let idx = 0; idx < queue.length; idx++) {
+                    const groupKey = queue[idx];
+                    const group = this.pendingGroups.get(groupKey);
+                    if (!group) continue;
+                    if (group.filter && !group.filter(msg, rinfo)) {
+                        continue; // not for this group
+                    }
+                    // match: remove the key from queue and resolve
+                    queue.splice(idx, 1);
+                    clearTimeout(group.timer);
+                    for (const req of group.reqs) {
+                        req.resolve(msg);
+                    }
+                    this.pendingGroups.delete(groupKey);
+                    return;
+                }
+
+                this.log(`KAB rx dropped: no group accepted the packet`);
             });
 
             sock.bind(this.bindPort, () => {
@@ -116,7 +130,13 @@ class KabSocketManager {
         return this.socket!;
     }
 
-    public async sendAndReceive(buf: Buffer, host: string, port: number, timeoutMs: number): Promise<Buffer> {
+    public async sendAndReceive(
+        buf: Buffer,
+        host: string,
+        port: number,
+        timeoutMs: number,
+        filter?: (msg: Buffer, rinfo: dgram.RemoteInfo) => boolean,
+    ): Promise<Buffer> {
         const sock = await this.getSocket();
         return new Promise((resolve, reject) => {
             const bufHex = buf.toString('hex');
@@ -124,7 +144,8 @@ class KabSocketManager {
 
             const req: PendingRequest = { resolve, reject };
 
-            // If a group for this identical buf is already pending, piggyback.
+            // If a group for this identical buf is already pending, piggyback (and
+            // inherit its filter if one exists).
             const existing = this.pendingGroups.get(groupKey);
             if (existing) {
                 existing.reqs.push(req);
@@ -148,7 +169,7 @@ class KabSocketManager {
                 }
             }, timeoutMs);
 
-            this.pendingGroups.set(groupKey, { reqs: [req], timer });
+            this.pendingGroups.set(groupKey, { reqs: [req], timer, filter });
             if (!this.pendingQueue.has(host)) this.pendingQueue.set(host, []);
             this.pendingQueue.get(host)!.push(groupKey);
 

@@ -49,11 +49,23 @@ function sendAndReceive(
     host: string,
     port: number,
     timeoutMs: number,
-    log?: (msg: string) => void,
+    filterOrLog?: ((msg: Buffer, rinfo: dgram.RemoteInfo) => boolean) | ((msg: string) => void),
+    maybeLog?: (msg: string) => void,
 ): Promise<Buffer> {
+    let filter: ((msg: Buffer, rinfo: dgram.RemoteInfo) => boolean) | undefined;
+    let log: ((msg: string) => void) | undefined;
+
+    if (filterOrLog) {
+        if (typeof filterOrLog === 'function' && filterOrLog.length === 2) {
+            filter = filterOrLog as (msg: Buffer, rinfo: dgram.RemoteInfo) => boolean;
+            log = maybeLog;
+        } else {
+            log = filterOrLog as (msg: string) => void;
+        }
+    }
     if (log) kabSocket.setLogger(log);
     // Let the global socket handle the UDP transaction
-    return kabSocket.sendAndReceive(buf, host, port, timeoutMs);
+    return kabSocket.sendAndReceive(buf, host, port, timeoutMs, filter);
 }
 
 /**
@@ -89,8 +101,16 @@ export async function performDiscovery(device: DeviceInfo, log?: (msg: string) =
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             const discBuf = buildDiscoveryHandshake(idInt, key, pass, device.kabBeaconOffset264, attempt);
-            const raw     = await sendAndReceive(discBuf, beaconHost, beaconPort, timeoutMs, log);
-            const disc    = parseDiscoveryResponse(raw);
+            // filter out any packets that are not parseable discovery responses
+            const raw = await sendAndReceive(
+                discBuf,
+                beaconHost,
+                beaconPort,
+                timeoutMs,
+                (msg: Buffer) => parseDiscoveryResponse(msg) !== null,
+                log,
+            );
+            const disc = parseDiscoveryResponse(raw);
             if (disc && disc.ip !== '0.0.0.0' && disc.port > 0) {
                 device.kabLanIp   = disc.ip;
                 device.kabLanPort = disc.port;
@@ -151,12 +171,25 @@ async function sendWithRetry(
 
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
-            const raw = await sendAndReceive(buf, host, port, timeoutMs, log);
-            const parsed = parseKabResponse(raw);
+            // calculate expected subtype from the outgoing buffer so we can filter
+            const expectedSubtype = buf.readUInt32LE(76);
+            const raw = await sendAndReceive(
+                buf,
+                host,
+                port,
+                timeoutMs,
+                (msg: Buffer) => {
+                    const parsed = parseKabResponse(msg);
+                    return parsed !== null && parsed.subtype === expectedSubtype;
+                },
+                log,
+            );
+            const parsed = parseKabResponse(raw); // should succeed because of filter
             if (parsed) {
                 log?.(`KAB response ok: cmdCode=${parsed.cmdCode} subtype=${parsed.subtype} powerState=${parsed.powerState}`);
                 return { ok: true, response: parsed };
             }
+            // shouldn't happen since filter passed, but handle defensively
             log?.(`KAB response unparseable (${raw.length}B)`);
             lastError = new Error(`Unparseable KAB response (${raw.length}B)`);
         } catch (e) {
