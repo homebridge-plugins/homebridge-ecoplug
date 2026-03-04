@@ -161,6 +161,7 @@ The plugin auto-selects protocol per device by discovery data. You can also forc
 - WiOn Outdoor Outlet 50049
 - Wion E211835 RC-031W Indoor Plugs
 - ~~Woods WiOn 50052 WiFi In-Wall Light Switch~~ (recalled due to fire hazard)
+- DEWENWILS 300W Smart Low Voltage Transformer
 
 ## Firewall checklist
 
