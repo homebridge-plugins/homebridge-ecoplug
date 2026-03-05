@@ -255,7 +255,7 @@ export function buildDiscoveryAck(
     devicePass: string,
     beaconOffset264: number = 0,
 ): Buffer {
-    let seq = 0x12345678;
+    const seq = 0x12345678;
 
     return buildKabCommand({
         deviceIdInt,

@@ -46,8 +46,6 @@ import {
 // complained about.
 const KAB_COMMAND_SUPPRESS_MS = 5000;
 
- 
-
 import {
     createLegacyManager,
     startKabBeaconListener,
@@ -57,7 +55,8 @@ import {
 
 import { kabSetPower, kabGetStatus } from './protocol/kab/protocol.js';
 import { kabSocket } from './protocol/kab/socket.js';
-import { parseDeviceIdInt }              from './protocol/kab/packets.js';
+import { parseDeviceIdInt } from './protocol/kab/packets.js';
+const pkg = require('../package.json') as { version: string };
 
 export class EcoPlugPlatform implements DynamicPlatformPlugin {
     public readonly Service:        typeof Service;
@@ -213,11 +212,14 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         // Start legacy status listener (shared socket)
         this.legacyManager.startStatusListener((msg) => {
             const acc = this.cachedAccessories.get(msg.id);
-            if (!acc) { this.log.debug('Status from unknown device', msg.id); return; }
+            if (!acc) {
+                this.log.debug('Status from unknown device', msg.id);
+                return;
+            }
 
             acc.context.lastUpdated = Date.now();
             this.getOnCharacteristic(acc)
-               ?.updateValue(msg.status);
+                    ?.updateValue(msg.status);
         });
 
         // Start passive KAB beacon listener; the `ack` option controls
@@ -258,7 +260,9 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
      */
     private seedStaticDevices(): void {
         for (const d of this.staticDevices) {
-            if (!d.host) continue;
+            if (!d.host) {
+                continue;
+            }
             const idInt = parseDeviceIdInt(d.id);
             const device: DeviceInfo = {
                 id:             d.id,
@@ -302,7 +306,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         device: DeviceInfo,
         source: 'legacy-discovery' | 'kab-beacon' | 'static-config',
     ): void {
-        let deviceId = typeof device.id === 'string' ? device.id.trim() : '';
+        const deviceId = typeof device.id === 'string' ? device.id.trim() : '';
         if (!deviceId) {
             this.log.warn(`Skipping discovered device with invalid id (${source}) @ ${device.host}`);
             return;
@@ -352,10 +356,18 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
         // (i.e. no beacon has been received yet, as in the static-config seed path).
         const override = this.deviceOverrideMap.get(deviceId.toUpperCase());
         if (override) {
-            if (override.kabKey && !device.kabKey)   device.kabKey  = override.kabKey;
-            if (override.kabPass && !device.kabPass) device.kabPass = override.kabPass;
-            if (override.commandPort) device.kabCommandPort = override.commandPort;
-            if (override.kabMaxFailures !== undefined) device.kabMaxFailures = override.kabMaxFailures;
+            if (override.kabKey && !device.kabKey) {
+                device.kabKey  = override.kabKey;
+            }
+            if (override.kabPass && !device.kabPass) {
+                device.kabPass = override.kabPass;
+            }
+            if (override.commandPort) {
+                device.kabCommandPort = override.commandPort;
+            }
+            if (override.kabMaxFailures !== undefined) {
+                device.kabMaxFailures = override.kabMaxFailures;
+            }
             if (override.protocol && override.protocol !== 'auto') {
                 device.protocol = override.protocol as 'legacy' | 'kab';
             }
@@ -403,8 +415,12 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             }
             // also propagate any LAN address discovered via beacon so subsequent
             // commands don’t trigger discovery handshakes
-            if (device.kabLanIp) existing.context.kabLanIp = device.kabLanIp;
-            if (device.kabLanPort) existing.context.kabLanPort = device.kabLanPort;
+            if (device.kabLanIp) {
+                existing.context.kabLanIp = device.kabLanIp;
+            }
+            if (device.kabLanPort) {
+                existing.context.kabLanPort = device.kabLanPort;
+            }
             existing.context.lastUpdated = Date.now();
         } else {
             this.log.info(`Adding new device (${source}): ${device.id} "${device.name}" @ ${device.host}`);
@@ -477,7 +493,6 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             serviceType:    svcType,
         };
 
-        const pkg = require('../package.json') as { version: string };
         accessory.getService(this.Service.AccessoryInformation)!
             .setCharacteristic(this.Characteristic.Manufacturer,       'KAB / ECO Plugs')
             .setCharacteristic(this.Characteristic.Model,              'CT-065W')
@@ -604,7 +619,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
                     if (this.cachedAccessories.has(ctx.id as string)) {
                         const acc = this.cachedAccessories.get(ctx.id as string)!;
                         const cachedVal = this.getOnCharacteristic(acc)
-                                             ?.value as boolean | undefined;
+                             ?.value as boolean | undefined;
                         if (cachedVal !== undefined && cachedVal === desired) {
                             this.log.info('Desired state already reflected by beacon, skipping further attempts');
                             ctx.kabConsecCmdFails = 0;
@@ -645,7 +660,9 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
                         break;
                     }
 
-                    if (attempt >= 3) break;
+                    if (attempt >= 3) {
+                break;
+            }
                     // small delay before retry
                     await new Promise(r => setTimeout(r, 200));
                 }
@@ -677,7 +694,7 @@ export class EcoPlugPlatform implements DynamicPlatformPlugin {
             this.statusInflight.set(id, Promise.resolve());
             // some devices take a little longer to actually toggle the relay;
             // give a generous window before allowing a status query to run.
-            // the previous 1 second value was too short for slower units and
+            // the previous 1 second value was too short for slower units and
             // resulted in the behaviour the user reports above.  the exact
             // duration is arbitrary but is now tied to KAB_COMMAND_SUPPRESS_MS.
             setTimeout(() => { this.statusInflight.delete(id); }, KAB_COMMAND_SUPPRESS_MS);

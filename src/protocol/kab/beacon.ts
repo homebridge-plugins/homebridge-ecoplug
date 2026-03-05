@@ -59,12 +59,9 @@ const BEACON_MIN_SIZE = 272;
 export function parseKabBeacon(decrypted: Buffer): DeviceInfo | null {
     if (decrypted.length < BEACON_MIN_SIZE) return null;
 
-    // Validate magic bytes at offsets 5‥8
-    if (
-        decrypted[5] !== 0x55 || decrypted[6] !== 0xaa ||
-        decrypted[7] !== 0x55 || decrypted[8] !== 0xaa
-    ) {
-        return null;
+    // Validate magic bytes at offsets 5‥8 using the constant
+    for (let i = 0; i < ECO_MAGIC.length; i++) {
+        if (decrypted[5 + i] !== ECO_MAGIC[i]) return null;
     }
 
     // Validate "ECO Plugs" — some firmware versions place this at offset 9,
@@ -199,7 +196,10 @@ export function startKabBeaconListener(
             device.port = KAB_DEVICE_PORT;
         }
 
-        log?.(`KAB beacon from ${remote.address}: ${device.id} "${device.name}" port=${device.port} offset=0x${(device.kabBeaconOffset264||0).toString(16)}`);
+        const beaconMsg = `KAB beacon from ${remote.address}: ${device.id}` +
+                          ` "${device.name}" port=${device.port}` +
+                          ` offset=0x${(device.kabBeaconOffset264||0).toString(16)}`;
+        log?.(beaconMsg);
 
         // The 36‑byte ACK is normally sent from the command port so that the
         // device records us as an active controller.  Some firmware versions

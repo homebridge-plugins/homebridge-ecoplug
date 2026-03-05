@@ -22,7 +22,7 @@ import {
     parseDeviceIdInt,
     type KabResponse,
 } from './packets.js';
-import { KAB_COMMAND_PORT, DEFAULT_KAB_COMMAND_TIMEOUT_MS } from '../../settings.js';
+import { DEFAULT_KAB_COMMAND_TIMEOUT_MS } from '../../settings.js';
 import type { DeviceInfo } from '../types.js';
 
 import { kabSocket } from './socket.js';
@@ -38,8 +38,8 @@ export interface KabCommandResult {
 
 /**
  * Internal: send `buf` to `host:port` and wait up to `timeoutMs` for a
- * response.  The socket is bound to KAB_COMMAND_PORT (9090) so the device
- * sees port 9090 as the source and replies there — mirroring the Android
+ * response.  The socket is bound to the default KAB command port (9090)
+ * so the device sees port 9090 as the source and replies there — mirroring
  * app which also binds a single socket to port 9090 for both send and receive.
  *
  * @param log  Optional logger — when supplied, debug lines are emitted.
@@ -118,7 +118,7 @@ export async function performDiscovery(device: DeviceInfo, log?: (msg: string) =
                 log?.('KAB discovery acknowledgment sent (cmdCode=22, subtype=105)');
                 return;
             } else {
-                log?.(`KAB discovery response unreadable`);
+                log?.('KAB discovery response unreadable');
             }
         } catch (e) {
             log?.(`KAB discovery attempt ${attempt} failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -162,7 +162,13 @@ async function sendWithRetry(
     const timeoutMs = device.kabCommandTimeoutMs ?? KAB_COMMAND_TIMEOUT_MS;
     const idIntInfo = (device.kabUseBeaconId ? (device.kabDeviceIdInt ?? 0) : parseDeviceIdInt(device.id) || (device.kabDeviceIdInt ?? 0));
     const b264 = device.kabBeaconOffset264 ?? 0;
-    log?.(`KAB sendWithRetry → ${device.id} @ ${host}:${port}  idInt=0x${(idIntInfo).toString(16)}  key="${device.kabKey ?? ''}"  retries=${retries} timeout=${timeoutMs}ms beaconOffset=0x${b264.toString(16)}`);
+    const logMsg = `KAB sendWithRetry → ${device.id} @ ${host}:${port}` +
+                   ` idInt=0x${idIntInfo.toString(16)}` +
+                   ` key="${device.kabKey ?? ''}"` +
+                   ` retries=${retries}` +
+                   ` timeout=${timeoutMs}ms` +
+                   ` beaconOffset=0x${b264.toString(16)}`;
+    log?.(logMsg);
 
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
@@ -175,14 +181,14 @@ async function sendWithRetry(
                 port,
                 timeoutMs,
                 // accept any valid KAB response (cmdCode≠105) that isn’t a
-                // byte‑for‑byte copy of the packet we just sent.  the
-                // kernel sometimes loops back outgoing datagrams to us when
-                // SO_REUSEPORT is enabled, and earlier we were erroneously
-                // treating our self‑echo as the device’s reply.
+                // byte‑for‑byte copy of the packet we just sent.  we additionally
+                // verify subtype so stray packets (or echoes of earlier commands)
+                // are ignored.
                 (msg: Buffer) => {
                     if (msg.equals(buf)) return false;            // ignore echo
                     const parsed = parseKabResponse(msg);
-                    return parsed !== null;
+                    if (!parsed) return false;
+                    return parsed.subtype === expectedSubtype;
                 },
                 log,
             );
@@ -202,7 +208,7 @@ async function sendWithRetry(
 
     // if we timed out on all retries and a bind port was configured, try ephemeral
     if (allowBindFallback && device && device.kabCommandPort !== undefined) {
-        const currentBind = (kabSocket as any).bindPort;
+        const currentBind = kabSocket.getBindPort();
         if (currentBind !== 0) {
             log?.('KAB command timed out on configured bind port, retrying with ephemeral port');
             kabSocket.setBindPort(0);
@@ -220,7 +226,7 @@ async function sendWithRetry(
             // broadcast
             await kabSocket.sendAndReceive(buf, '255.255.255.255', port, timeoutMs).catch(() => {});
             // ephemeral source port
-            const origBind = (kabSocket as any).bindPort;
+            const origBind = kabSocket.getBindPort();
             kabSocket.setBindPort(0);
             await kabSocket.sendAndReceive(buf, host, port, timeoutMs).catch(() => {});
             kabSocket.setBindPort(origBind);

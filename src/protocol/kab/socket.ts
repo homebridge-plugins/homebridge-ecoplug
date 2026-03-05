@@ -37,6 +37,15 @@ class KabSocketManager {
             this.bindingData = null;
         }
     }
+
+    /**
+     * Read‑only accessor for the currently configured bind port.  Used by
+     * callers that need to temporarily switch to an ephemeral port then restore
+     * the original value.
+     */
+    public getBindPort(): number {
+        return this.bindPort;
+    }
     
     // pendingGroups maps a unique group key (host:port:bufHex) to all callers
     // that piggybacked that exact outgoing buffer.  pendingQueue preserves

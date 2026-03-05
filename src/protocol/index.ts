@@ -13,6 +13,6 @@
 export { createLegacyManager } from './legacy/protocol.js';
 export { startKabBeaconListener } from './kab/beacon.js';
 export type { LegacyManager } from './legacy/protocol.js';
-export type { BeaconCallback }  from './kab/beacon.js';
+export type { BeaconCallback } from './kab/beacon.js';
 
 export type { DeviceInfo, StatusMessage } from './types.js';
