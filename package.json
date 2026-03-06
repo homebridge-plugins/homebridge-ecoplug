@@ -1,7 +1,7 @@
 {
   "name": "@homebridge-plugins/homebridge-ecoplug",
   "displayName": "Homebridge EcoPlug",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Homebridge plugin that connects ECO Plugs to Apple HomeKit",
   "license": "MIT",
   "author": {
