@@ -2,13 +2,13 @@
 
 All notable changes to `@homebridge-plugins/homebridge-ecoplug` will be documented in this file.
 
-## v1.0.1 (Pending Release)
+## v1.0.1 (2026-03-06)
 
 ### Changes
 
 - fix duplicate enum item in config schema file
 
-## v1.0.0 (1016-03-06)
+## v1.0.0 (2026-03-06)
 
 ### Changes
 
