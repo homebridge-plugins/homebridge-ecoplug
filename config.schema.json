@@ -166,7 +166,7 @@
             "serviceType": {
               "title": "Service Type",
               "type": "string",
-              "enum": ["outlet", "switch", "switch", "Lightbulb", "Dimmer", "Fan"],
+              "enum": ["outlet", "switch", "Lightbulb", "Dimmer", "Fan"],
               "description": "Override the HomeKit service for this device (default inherits from platform setting)."
             },
             "host": {
@@ -174,7 +174,6 @@
               "type": "string",
               "description": "Static IP address of the device. Set this to connect immediately without waiting for a device beacon on port 10228."
             },
-
             "commandPort": {
               "title": "Command Port",
               "type": "number",
